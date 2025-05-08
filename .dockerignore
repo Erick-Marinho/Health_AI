@@ -31,10 +31,6 @@ __pycache__/
 *.sublime-project
 *.sublime-workspace
 
-# Arquivos de configuração local (se não forem gerenciados de outra forma)
-# .env  # Comente ou descomente dependendo da sua estratégia para .env
-         # No seu caso atual, .env é usado pelo docker-compose e não é copiado para a imagem do app.
-
 # Testes e cobertura (se aplicável)
 .pytest_cache/
 htmlcov/
