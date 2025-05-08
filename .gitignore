@@ -1,3 +1,5 @@
+ai.md
+
 # Python-generated files
 __pycache__/
 *.py[oc]
@@ -18,12 +20,6 @@ venv.bak/
 # Docker
 .dockerignore
 
-# Poetry
-poetry.lock
-
-uv.lock
-
-ai.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
