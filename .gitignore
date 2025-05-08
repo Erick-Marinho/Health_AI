@@ -7,5 +7,18 @@ wheels/
 *.egg-info
 
 # Virtual environments
+.env
 .venv
-ai.md
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Docker
+.dockerignore
+
+# Poetry
+poetry.lock
+
+uv.lock

@@ -1,0 +1,59 @@
+# .dockerignore
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Ambientes virtuais Python
+.venv/
+venv/
+env/
+ENV/
+*/.venv/
+*/venv/
+*/env/
+*/ENV/
+
+# Cache do Python e arquivos de bytecode
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Arquivos de IDE e editores
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# Arquivos de configuração local (se não forem gerenciados de outra forma)
+# .env  # Comente ou descomente dependendo da sua estratégia para .env
+         # No seu caso atual, .env é usado pelo docker-compose e não é copiado para a imagem do app.
+
+# Testes e cobertura (se aplicável)
+.pytest_cache/
+htmlcov/
+.coverage
+*.coverage
+
+# Artefatos de build do Python (geralmente não relevantes para apps servidos)
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Logs
+*.log
+logs/
+
+# Arquivos específicos do sistema operacional
+.DS_Store
+Thumbs.db
+
+# Outros arquivos/pastas específicos do seu projeto que não devem ir para a imagem
+# Ex: docs/, notebooks/, etc., se não forem necessários no runtime
