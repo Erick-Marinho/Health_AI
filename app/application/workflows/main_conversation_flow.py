@@ -7,7 +7,7 @@ from datetime import datetime, date, timedelta, time
 from functools import partial
 from typing import Optional, List, Dict
 from app.core.config import settings
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -55,7 +55,7 @@ def categorize_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> dict:
         logger.warning("Nenhuma mensagem de usuário para categorizar.")
         return {
             "response_to_user": "Não consegui entender sua solicitação. Pode tentar novamente?",
-            "current_operation": None, # Limpa a operação se a categorização falhar aqui
+            "current_operation": None,
             "categoria": "Indefinido"
         }
 
@@ -83,9 +83,8 @@ def solicitar_nome_agendamento_node(state: MainWorkflowState, llm_client: ChatOp
     """
     logger.debug("--- Nó Agendamento: solicitar_nome_agendamento_node ---")
     
-    # Usar o prompt para gerar a pergunta sobre o nome
-    # (Poderia ser um serviço como em conversation_service.py se a lógica for mais complexa)
-    prompt = REQUEST_FULL_NAME_PROMPT_TEMPLATE.format_messages() # Garante que seja uma lista de BaseMessage
+    
+    prompt = REQUEST_FULL_NAME_PROMPT_TEMPLATE.format_messages()
     logger.debug(f"Gerando solicitação de nome completo com o LLM. Prompt: {prompt}")
     ai_response = llm_client.invoke(prompt)
     resposta_llm = ai_response.content.strip()
@@ -93,8 +92,8 @@ def solicitar_nome_agendamento_node(state: MainWorkflowState, llm_client: ChatOp
 
     return {
         "response_to_user": resposta_llm,
-        "scheduling_step": "VALIDATING_FULL_NAME", # Próximo passo é validar a resposta do usuário
-        "current_operation": "SCHEDULING" # Mantém a operação
+        "scheduling_step": "VALIDATING_FULL_NAME", 
+        "current_operation": "SCHEDULING"
     }
 
 def coletar_validar_nome_agendamento_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> dict:
@@ -106,7 +105,6 @@ def coletar_validar_nome_agendamento_node(state: MainWorkflowState, llm_client: 
 
     if not user_message_content:
         logger.warning("Nenhuma resposta do usuário para coletar/validar o nome.")
-        # Reutilizar o prompt de solicitação de nome se o usuário não enviar nada
         reprompt_messages = REQUEST_FULL_NAME_PROMPT_TEMPLATE.format_messages()
         ai_reprompt_response = llm_client.invoke(reprompt_messages)
         return {
@@ -117,8 +115,8 @@ def coletar_validar_nome_agendamento_node(state: MainWorkflowState, llm_client: 
 
     logger.info(f"Mensagem recebida do usuário para extração de nome: '{user_message_content}'")
 
-    # 1. Usar LLM para extrair o nome da mensagem do usuário
-    extracted_name = "NOME_NAO_IDENTIFICADO" # Default
+    
+    extracted_name = "NOME_NAO_IDENTIFICADO"
     try:
         extraction_prompt_messages = EXTRACT_FULL_NAME_PROMPT_TEMPLATE.format_messages(user_message=user_message_content)
         llm_extraction_response = llm_client.invoke(extraction_prompt_messages)
@@ -126,7 +124,6 @@ def coletar_validar_nome_agendamento_node(state: MainWorkflowState, llm_client: 
         logger.info(f"Nome extraído pelo LLM: '{extracted_name}' (da entrada: '{user_message_content}')")
     except Exception as e:
         logger.error(f"Erro ao invocar LLM para extração de nome: {e}", exc_info=True)
-        # Se houver erro na extração, pedir novamente de forma genérica
         return {
             "response_to_user": "Tive um problema ao entender o nome informado. Poderia, por favor, me dizer seu nome completo novamente?",
             "scheduling_step": "VALIDATING_FULL_NAME",
@@ -135,7 +132,6 @@ def coletar_validar_nome_agendamento_node(state: MainWorkflowState, llm_client: 
 
     if not extracted_name or extracted_name == "NOME_NAO_IDENTIFICADO":
         logger.warning(f"LLM não conseguiu extrair um nome válido da entrada: '{user_message_content}'. Retorno do LLM: '{extracted_name}'")
-        # Reutilizar o prompt de solicitação de nome
         reprompt_messages = REQUEST_FULL_NAME_PROMPT_TEMPLATE.format_messages()
         ai_reprompt_response = llm_client.invoke(reprompt_messages)
         return {
@@ -144,7 +140,6 @@ def coletar_validar_nome_agendamento_node(state: MainWorkflowState, llm_client: 
             "current_operation": "SCHEDULING"
         }
 
-    # 2. Validar o nome extraído usando Pydantic
     try:
         validated_name_model = FullNameModel(full_name=extracted_name)
         final_validated_name = validated_name_model.full_name
@@ -156,7 +151,7 @@ def coletar_validar_nome_agendamento_node(state: MainWorkflowState, llm_client: 
         logger.info(f"Pergunta sobre especialidade gerada após validar nome: '{pergunta_especialidade}'")
         
         return {
-            "user_full_name": final_validated_name, # Salva o nome realmente validado
+            "user_full_name": final_validated_name,
             "response_to_user": pergunta_especialidade,
             "scheduling_step": "VALIDATING_SPECIALTY",
             "current_operation": "SCHEDULING",
@@ -177,7 +172,7 @@ def coletar_validar_nome_agendamento_node(state: MainWorkflowState, llm_client: 
             "scheduling_step": "VALIDATING_FULL_NAME", 
             "current_operation": "SCHEDULING"
         }
-    except Exception as e: # Outros erros inesperados
+    except Exception as e:
         logger.error(f"Erro inesperado durante validação Pydantic do nome '{extracted_name}': {e}", exc_info=True)
         return {
             "response_to_user": "Ocorreu um erro ao processar seu nome. Poderia, por favor, informar seu nome completo novamente?",
@@ -195,14 +190,14 @@ def coletar_validar_especialidade_node(state: MainWorkflowState, llm_client: Cha
         logger.warning("Nenhuma mensagem do usuário para validar especialidade.")
         return {
             "response_to_user": "Por favor, informe a especialidade médica desejada.",
-            "scheduling_step": "VALIDATING_SPECIALTY", # Mantém para reprompt
+            "scheduling_step": "VALIDATING_SPECIALTY", 
             "user_chosen_specialty": None,
             "user_chosen_specialty_id": None
         }
 
-    # 1. Usar LLM para validar/normalizar o nome da especialidade
+    
     prompt_validate_specialty_messages = VALIDATE_SPECIALTY_PROMPT_TEMPLATE.format_messages(
-        user_input_specialty=last_user_message # Corrigido para user_input_specialty
+        user_input_specialty=last_user_message 
     )
     try:
         validated_specialty_response = llm_client.invoke(prompt_validate_specialty_messages)
@@ -211,10 +206,10 @@ def coletar_validar_especialidade_node(state: MainWorkflowState, llm_client: Cha
 
         if cleaned_specialty_name == "ENTRADA_INVALIDA_NAO_EH_ESPECIALIDADE":
             logger.info(f"Entrada '{last_user_message}' não foi considerada uma especialidade válida pelo LLM inicial.")
-            # Adicionar uma mensagem mais amigável aqui, talvez listando exemplos ou perguntando novamente
+            
             return {
                 "response_to_user": f"Desculpe, não entendi '{last_user_message}' como uma especialidade médica. Poderia tentar informar novamente? Por exemplo: Cardiologia, Ortopedia, etc.",
-                "scheduling_step": "VALIDATING_SPECIALTY", # Mantém para reprompt
+                "scheduling_step": "VALIDATING_SPECIALTY",
                 "user_chosen_specialty": None,
                 "user_chosen_specialty_id": None
             }
@@ -228,7 +223,6 @@ def coletar_validar_especialidade_node(state: MainWorkflowState, llm_client: Cha
             "user_chosen_specialty_id": None
         }
 
-    # 2. Buscar TODAS as especialidades da API
     api_token = settings.APPHEALTH_API_TOKEN
     api_headers = {
         "Authorization": f"{api_token}",
@@ -271,7 +265,6 @@ def coletar_validar_especialidade_node(state: MainWorkflowState, llm_client: Cha
             "user_chosen_specialty_id": None
         }
 
-    # 3. Formular o prompt para o LLM encontrar a correspondência
     prompt_match_specialty_messages = MATCH_OFFICIAL_SPECIALTY_PROMPT_TEMPLATE.format_messages(
         normalized_user_input_specialty=cleaned_specialty_name,
         official_specialties_list_str=", ".join(nomes_especialidades_oficiais)
@@ -291,7 +284,6 @@ def coletar_validar_especialidade_node(state: MainWorkflowState, llm_client: Cha
             "user_chosen_specialty_id": None
         }
 
-    # 4. Encontrar o ID correspondente e preparar a resposta
     if nome_especialidade_llm_match != "NENHUMA_CORRESPONDENCIA" and nome_especialidade_llm_match:
         for item in especialidades_api_list:
             if item.get("especialidade") == nome_especialidade_llm_match and isinstance(item.get("id"), int):
@@ -299,8 +291,6 @@ def coletar_validar_especialidade_node(state: MainWorkflowState, llm_client: Cha
                 official_specialty_name = item["especialidade"]
                 logger.info(f"Sucesso! Entrada original '{last_user_message}' (normalizada para '{cleaned_specialty_name}') correspondeu a '{official_specialty_name}' (ID: {specialty_id_found}).")
                 
-                # Usar LLM para gerar a próxima pergunta (preferência de profissional)
-                # Isso é mais flexível do que uma string fixa.
                 next_question_prompt = REQUEST_PROFESSIONAL_PREFERENCE_PROMPT_TEMPLATE.format_messages(
                     user_name=user_full_name,
                     user_specialty=official_specialty_name
@@ -317,12 +307,11 @@ def coletar_validar_especialidade_node(state: MainWorkflowState, llm_client: Cha
                 }
         
         logger.warning(f"Especialidade '{nome_especialidade_llm_match}' sugerida pelo LLM de correspondência não foi encontrada na lista original da API (isso pode indicar um problema no prompt de match ou na lista).")
-        # Tratar como NENHUMA_CORRESPONDENCIA se o nome do LLM não estiver na lista.
         
-    # Se NENHUMA_CORRESPONDENCIA ou o nome do LLM não foi achado na lista
+        
     logger.info(f"Nenhuma correspondência oficial encontrada para '{cleaned_specialty_name}' (entrada original: '{last_user_message}').")
     
-    available_specialties_str = "\n".join([f"- {esp}" for esp in nomes_especialidades_oficiais[:10]]) # Listar até 10
+    available_specialties_str = "\n".join([f"- {esp}" for esp in nomes_especialidades_oficiais[:10]]) 
     response_text = (
         f"Desculpe, {user_full_name}, não consegui encontrar a especialidade '{cleaned_specialty_name}' em nossa lista, ou ela não está disponível no momento.\n"
         f"Atualmente, trabalhamos com as seguintes especialidades:\n{available_specialties_str}\n"
@@ -330,7 +319,7 @@ def coletar_validar_especialidade_node(state: MainWorkflowState, llm_client: Cha
     )
     return {
         "response_to_user": response_text,
-        "scheduling_step": "VALIDATING_SPECIALTY", # Volta para o usuário tentar novamente
+        "scheduling_step": "VALIDATING_SPECIALTY",
         "user_chosen_specialty": None,
         "user_chosen_specialty_id": None,
         "error_message": f"Especialidade '{cleaned_specialty_name}' (original: '{last_user_message}') não encontrada ou mapeada."
@@ -354,7 +343,7 @@ def solicitar_preferencia_profissional_node(state: MainWorkflowState, llm_client
 
     return {
         "response_to_user": pergunta_preferencia,
-        "scheduling_step": "CLASSIFYING_PROFESSIONAL_PREFERENCE", # Próximo passo
+        "scheduling_step": "CLASSIFYING_PROFESSIONAL_PREFERENCE",
         "current_operation": "SCHEDULING"
     }
 
@@ -364,13 +353,13 @@ def coletar_classificar_preferencia_profissional_node(state: MainWorkflowState, 
     """
     logger.debug("--- Nó Agendamento: coletar_classificar_preferencia_profissional_node ---")
     user_response_content = get_last_user_message_content(state["messages"])
-    user_specialty = state.get("user_chosen_specialty", "a especialidade escolhida") # Para o prompt de classificação
+    user_specialty = state.get("user_chosen_specialty", "a especialidade escolhida")
 
     if not user_response_content:
         logger.warning("Nenhuma resposta do usuário para coletar/classificar a preferência de profissional.")
         return {
             "response_to_user": "Não recebi sua preferência sobre o profissional. Poderia me dizer?",
-            "scheduling_step": "CLASSIFYING_PROFESSIONAL_PREFERENCE", # Tenta novamente
+            "scheduling_step": "CLASSIFYING_PROFESSIONAL_PREFERENCE",
             "current_operation": "SCHEDULING"
         }
 
@@ -385,13 +374,9 @@ def coletar_classificar_preferencia_profissional_node(state: MainWorkflowState, 
         llm_classification_response_str = llm_client.invoke(prompt_messages).content.strip()
         logger.debug(f"Resposta de classificação do LLM (raw): {llm_classification_response_str}")
         
-        # Tentar extrair o JSON da resposta do LLM
-        # O prompt pede "APENAS como um objeto JSON", então idealmente é só parsear.
-        # Mas adicionamos uma busca por JSON como fallback.
         match = re.search(r'\{.*\}', llm_classification_response_str, re.DOTALL)
         if not match:
             logger.error(f"Nenhum JSON encontrado na resposta de classificação do LLM: '{llm_classification_response_str}'")
-            # Fallback: pedir para o usuário repetir de forma mais clara
             return {
                 "response_to_user": "Desculpe, não consegui processar sua resposta sobre a preferência de profissional. Poderia tentar novamente de forma mais direta, por exemplo, 'gostaria de uma indicação' ou 'prefiro escolher o Dr. Nome Sobrenome'?",
                 "scheduling_step": "CLASSIFYING_PROFESSIONAL_PREFERENCE",
@@ -406,28 +391,23 @@ def coletar_classificar_preferencia_profissional_node(state: MainWorkflowState, 
 
         if not preference_type or preference_type == "AMBIGUOUS_OR_NEGATIVE":
             logger.warning(f"Preferência classificada como ambígua, negativa ou tipo ausente: {preference_type}")
-            # Mensagem inspirada em processar_preferencia_profissional de agentv1.py
             reprompt_message = "Desculpe, não consegui entender sua preferência. Você gostaria que eu buscasse opções de profissionais para você, ou você prefere nomear um específico?"
             return {
                 "response_to_user": reprompt_message,
-                "scheduling_step": "CLASSIFYING_PROFESSIONAL_PREFERENCE", # Volta para tentar classificar novamente
+                "scheduling_step": "CLASSIFYING_PROFESSIONAL_PREFERENCE",
                 "current_operation": "SCHEDULING",
-                "professional_preference_type": None, # Limpa
-                "user_provided_professional_name": None # Limpa
+                "professional_preference_type": None,
+                "user_provided_professional_name": None 
             }
 
-        # Atualiza o estado com a preferência classificada
         update_dict = {
             "professional_preference_type": preference_type,
             "user_provided_professional_name": extracted_name if preference_type == "SPECIFIC_NAME_PROVIDED" else None,
-            "scheduling_step": "PROCESSING_PROFESSIONAL_LOGIC", # Próximo passo genérico para lógica de profissional
+            "scheduling_step": "PROCESSING_PROFESSIONAL_LOGIC", 
             "current_operation": "SCHEDULING",
-            "response_to_user": None # O próximo nó (PROCESSING_PROFESSIONAL_LOGIC) gerará a resposta
+            "response_to_user": None 
         }
         
-        # Se a preferência for clara e o próximo passo for direto (como pedir o nome se "SPECIFIC_NAME_TO_PROVIDE_LATER"),
-        # o nó PROCESSING_PROFESSIONAL_LOGIC cuidará da mensagem.
-        # Por enquanto, apenas preparamos o estado.
         return update_dict
 
     except json.JSONDecodeError as e:
@@ -523,7 +503,6 @@ async def processing_professional_logic_node(
                 professional_names_from_api_list_str=", ".join(nomes_api_para_match)
             )
             llm_match_response = llm_client.invoke(match_name_prompt_messages)
-            # Limpeza adicional do nome retornado pelo LLM
             matched_name_from_llm = llm_match_response.content.strip().strip('.').strip(',') 
             logger.info(f"LLM de correspondência de nome sugeriu (e foi limpo para): '{matched_name_from_llm}' para a entrada limpa '{cleaned_user_typed_name}'")
 
@@ -536,7 +515,6 @@ async def processing_professional_logic_node(
         matched_professional_obj = None
         if matched_name_from_llm != "NENHUMA_CORRESPONDENCIA" and matched_name_from_llm:
             for prof_obj in lista_profissionais_da_especialidade_api:
-                # Comparar o nome limpo do LLM com o nome da API
                 if prof_obj.get("nome") and prof_obj.get("nome").strip() == matched_name_from_llm:
                     matched_professional_obj = prof_obj
                     break 
@@ -563,7 +541,6 @@ async def processing_professional_logic_node(
             )
             updates_for_state["scheduling_step"] = "CLASSIFYING_PROFESSIONAL_PREFERENCE"
             updates_for_state["user_provided_professional_name"] = None 
-        # Remoção da lógica duplicada já foi feita anteriormente.
 
     elif preference_type == "RECOMMENDATION": 
         logger.info(f"Preferência do usuário é '{preference_type}'. Próximo passo: listar profissionais disponíveis.")
@@ -598,7 +575,6 @@ def solicitar_turno_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> di
     professional_name = state.get("user_chosen_professional_name")
     specialty_name = state.get("user_chosen_specialty", "a especialidade")
 
-    # Se tivermos um nome de profissional, usamos. Senão, a especialidade.
     professional_for_prompt = professional_name if professional_name else f"um profissional de {specialty_name}"
 
     prompt_messages = REQUEST_TURN_PREFERENCE_PROMPT_TEMPLATE.format_messages(
@@ -610,7 +586,7 @@ def solicitar_turno_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> di
 
     return {
         "response_to_user": pergunta_turno,
-        "scheduling_step": "VALIDATING_TURN_PREFERENCE", # Próximo passo
+        "scheduling_step": "VALIDATING_TURN_PREFERENCE", 
         "current_operation": "SCHEDULING"
     }
 
@@ -668,11 +644,9 @@ def coletar_validar_turno_node(state: MainWorkflowState, llm_client: ChatOpenAI)
 
     except Exception as e:
         logger.error(f"Erro ao invocar LLM para classificação de turno: {e}", exc_info=True)
-        # Não retorna aqui, permite a verificação manual abaixo como fallback
 
-    # Verificação manual como fallback ou reforço, especialmente para casos simples
     normalized_user_response = user_response_content.strip().lower()
-    if llm_classification_response_str == "INVALIDO": # Só tenta manual se LLM falhou ou retornou inválido
+    if llm_classification_response_str == "INVALIDO": 
         if normalized_user_response == "manha" or "manhã" in normalized_user_response :
             logger.info(f"Normalização manual/LLM fallback: '{user_response_content}' -> MANHA")
             llm_classification_response_str = "MANHA"
@@ -716,7 +690,7 @@ def list_available_professionals_node(state: MainWorkflowState, llm_client: Chat
     """
     logger.debug("--- Nó Agendamento: list_available_professionals_node ---")
     
-    API_TOKEN = "TXH3xnwI7P4Sh5dS71aRDsQzDrx1GKeW8jXd5eHDpqTOi" # Exemplo - NÃO USE EM PRODUÇÃO
+    API_TOKEN = "TXH3xnwI7P4Sh5dS71aRDsQzDrx1GKeW8jXd5eHDpqTOi"
     api_headers = {
         "Authorization": f"{API_TOKEN}",
         "Content-Type": "application/json"
@@ -728,7 +702,6 @@ def list_available_professionals_node(state: MainWorkflowState, llm_client: Chat
 
     if not specialty_id:
         logger.error(f"ID da especialidade '{specialty_name}' não encontrado no estado para listar profissionais.")
-        # Gerar mensagem de erro com LLM
         error_prompt = ChatPromptTemplate.from_template(
             "Você é um assistente de agendamento. Informe ao usuário {user_name} que ocorreu um problema "
             "ao tentar identificar a especialidade para buscar os profissionais e que será necessário tentar novamente a seleção da especialidade."
@@ -736,20 +709,20 @@ def list_available_professionals_node(state: MainWorkflowState, llm_client: Chat
         error_response_content = llm_client.invoke(error_prompt.format_messages(user_name=user_full_name)).content.strip()
         return {
             "response_to_user": error_response_content,
-            "scheduling_step": "VALIDATING_SPECIALTY", # Volta para escolher especialidade
+            "scheduling_step": "VALIDATING_SPECIALTY",
             "current_operation": "SCHEDULING",
             "user_chosen_specialty_id": None,
             "available_professionals_list": None
         }
 
     url = "https://back.homologacao.apphealth.com.br:9090/api-vizi/profissionais"
-    params = {"especialidadeId": specialty_id, "status": "true"} # Busca profissionais ativos
+    params = {"especialidadeId": specialty_id, "status": "true"}
     logger.info(f"Consultando API de profissionais: {url} com params: {params}")
 
     try:
         response = requests.get(url, headers=api_headers, params=params, timeout=10)
         response.raise_for_status()
-        professionals_api_data = response.json() # Espera-se List[Dict] com id, nome, etc.
+        professionals_api_data = response.json()
 
         if not professionals_api_data or not isinstance(professionals_api_data, list) or len(professionals_api_data) == 0:
             logger.info(f"Nenhum profissional encontrado para a especialidade {specialty_name} (ID: {specialty_id}).")
@@ -762,13 +735,11 @@ def list_available_professionals_node(state: MainWorkflowState, llm_client: Chat
             ).content.strip()
             return {
                 "response_to_user": no_professionals_response,
-                "scheduling_step": "REQUESTING_SPECIALTY", # Ou REQUESTING_PROFESSIONAL_PREFERENCE
+                "scheduling_step": "REQUESTING_SPECIALTY", 
                 "current_operation": "SCHEDULING",
                 "available_professionals_list": []
             }
 
-        # Limitar a quantidade de profissionais apresentados, e extrair apenas id e nome para o estado e prompt
-        # Guardar a lista completa com IDs e nomes para validação posterior
         simplified_professionals_list = []
         for prof in professionals_api_data:
             if prof.get("id") and prof.get("nome"):
@@ -776,7 +747,6 @@ def list_available_professionals_node(state: MainWorkflowState, llm_client: Chat
         
         if not simplified_professionals_list:
              logger.warning(f"Profissionais encontrados para {specialty_name}, mas sem ID/Nome válidos.")
-             # Tratar como se não tivesse encontrado
              return {
                 "response_to_user": f"Desculpe, {user_full_name}, encontrei registros para {specialty_name} mas estou com dificuldade para obter os nomes. Gostaria de tentar outra especialidade?",
                 "scheduling_step": "REQUESTING_SPECIALTY",
@@ -784,8 +754,6 @@ def list_available_professionals_node(state: MainWorkflowState, llm_client: Chat
                 "available_professionals_list": []
             }
 
-
-        # Apresentar até N profissionais (ex: 5)
         max_to_show = 5
         professionals_to_show = simplified_professionals_list[:max_to_show]
         
@@ -857,13 +825,11 @@ def collect_validate_chosen_professional_node(state: MainWorkflowState, llm_clie
     logger.debug("--- Nó Agendamento: collect_validate_chosen_professional_node ---")
     user_response_content = get_last_user_message_content(state["messages"])
     
-    # Lista de profissionais que foi apresentada (deve conter ID e Nome)
     professionals_shown_list = state.get("available_professionals_list", []) 
     user_full_name = state.get("user_full_name", "Paciente")
 
     if not user_response_content:
         logger.warning("Nenhuma resposta do usuário para validar escolha do profissional.")
-        # Gerar reprompt com LLM para pedir a escolha novamente
         reprompt_llm = ChatPromptTemplate.from_template(
             "Você é um assistente de agendamento. O usuário não respondeu qual profissional da lista ele gostaria de escolher. "
             "Relembre-o das opções (sem listar novamente, apenas diga para escolher da lista anterior) e peça para fornecer o nome ou número."
@@ -876,7 +842,6 @@ def collect_validate_chosen_professional_node(state: MainWorkflowState, llm_clie
 
     if not professionals_shown_list:
         logger.error("Lista de profissionais 'available_professionals_list' não encontrada no estado.")
-        # Erro interno, voltar para listagem
         return {
             "response_to_user": f"Desculpe, {user_full_name}, ocorreu um problema e não consigo ver a lista de profissionais que apresentei. Vamos tentar listar novamente.",
             "scheduling_step": "LISTING_AVAILABLE_PROFESSIONALS",
@@ -886,7 +851,6 @@ def collect_validate_chosen_professional_node(state: MainWorkflowState, llm_clie
     chosen_prof_id = None
     chosen_prof_name = None
 
-    # Tentar por número da opção
     try:
         choice_num = int(user_response_content)
         if 1 <= choice_num <= len(professionals_shown_list):
@@ -894,12 +858,10 @@ def collect_validate_chosen_professional_node(state: MainWorkflowState, llm_clie
             chosen_prof_id = selected.get("id")
             chosen_prof_name = selected.get("nome")
     except ValueError:
-        # Não é um número, tentar por correspondência de nome (simples, pode ser melhorado com LLM/fuzzy)
         for prof_data in professionals_shown_list:
             if prof_data.get("nome") and user_response_content.lower() in prof_data["nome"].lower():
-                if chosen_prof_id: # Ambiguidade se mais de um corresponder
+                if chosen_prof_id: 
                     logger.warning(f"Escolha ambígua de profissional por nome: '{user_response_content}'")
-                    # Usar LLM para gerar mensagem de ambiguidade
                     ambiguous_prompt = ChatPromptTemplate.from_template(
                         "Você é um assistente de agendamento. O usuário {user_name} forneceu um nome de profissional '{user_input}' que é ambíguo na lista. "
                         "Peça para ele ser mais específico ou usar o número da opção."
@@ -917,14 +879,13 @@ def collect_validate_chosen_professional_node(state: MainWorkflowState, llm_clie
         return {
             "user_chosen_professional_id": chosen_prof_id,
             "user_chosen_professional_name": chosen_prof_name,
-            "response_to_user": None, # Próximo nó (solicitar turno) fará a pergunta
+            "response_to_user": None, 
             "scheduling_step": "REQUESTING_TURN_PREFERENCE",
             "current_operation": "SCHEDULING",
-            "available_professionals_list": None # Limpa a lista do estado
+            "available_professionals_list": None 
         }
     else:
         logger.warning(f"Escolha do profissional '{user_response_content}' não validada.")
-        # Usar LLM para gerar mensagem de "escolha inválida"
         invalid_choice_prompt_str = """
         Você é um assistente de agendamento. O usuário {user_name} fez uma escolha de profissional ('{user_input}') que não corresponde
         a nenhuma das opções apresentadas anteriormente.
@@ -953,14 +914,11 @@ def collect_validate_chosen_date_node(state: MainWorkflowState, llm_client: Chat
     logger.debug("--- Nó Agendamento: collect_validate_chosen_date_node ---")
     user_response_content = get_last_user_message_content(state["messages"])
     
-    # Datas que foram apresentadas ao usuário, formato "AAAA-MM-DD"
     available_dates_api_format = state.get("available_dates_presented", [])
     user_full_name = state.get("user_full_name", "Paciente")
 
     if not user_response_content:
         logger.warning("Nenhuma resposta do usuário para validar data escolhida.")
-        # Gerar reprompt com LLM para pedir a escolha novamente
-        # (Poderia ser um prompt simples ou um que re-liste as opções de forma concisa)
         return {
             "response_to_user": "Por favor, escolha uma das datas apresentadas.",
             "scheduling_step": "VALIDATING_CHOSEN_DATE",
@@ -971,12 +929,10 @@ def collect_validate_chosen_date_node(state: MainWorkflowState, llm_client: Chat
         logger.error("'available_dates_presented' não encontrado no estado. Não é possível validar a escolha.")
         return {
             "response_to_user": f"Desculpe, {user_full_name}, ocorreu um problema e não consigo ver as opções de data que apresentei. Vamos tentar buscar as datas novamente.",
-            "scheduling_step": "FETCHING_AVAILABLE_DATES", # Volta para buscar datas
+            "scheduling_step": "FETCHING_AVAILABLE_DATES",
             "current_operation": "SCHEDULING"
         }
 
-    # Preparar strings para o prompt do LLM
-    # Lista para display: "1. DD/MM/YYYY\n2. DD/MM/YYYY ..."
     date_options_display_list = []
     for i, date_str_api in enumerate(available_dates_api_format):
         try:
@@ -984,14 +940,13 @@ def collect_validate_chosen_date_node(state: MainWorkflowState, llm_client: Chat
             date_options_display_list.append(f"{i+1}. {dt_obj.strftime('%d/%m/%Y')}")
         except ValueError:
             logger.warning(f"Data inválida em available_dates_presented: {date_str_api}")
-            # Ignorar esta data para o display se estiver mal formatada (improvável se veio da API correta)
 
     date_options_display_list_str = "\n".join(date_options_display_list)
     date_options_internal_list_str = ", ".join(available_dates_api_format)
 
     logger.info(f"Validando escolha de data: '{user_response_content}' contra opções (API format): {available_dates_api_format}")
 
-    chosen_date_api_format = "NENHUMA_CORRESPONDENCIA_OU_AMBIGUA" # Default
+    chosen_date_api_format = "NENHUMA_CORRESPONDENCIA_OU_AMBIGUA" 
     try:
         prompt_messages = VALIDATE_CHOSEN_DATE_PROMPT_TEMPLATE.format_messages(
             date_options_display_list_str=date_options_display_list_str,
@@ -1001,46 +956,28 @@ def collect_validate_chosen_date_node(state: MainWorkflowState, llm_client: Chat
         llm_response = llm_client.invoke(prompt_messages).content.strip()
         logger.info(f"LLM para validação de data retornou: '{llm_response}'")
         
-        # Verificar se o LLM retornou uma data válida que está na nossa lista original
         if llm_response in available_dates_api_format:
             chosen_date_api_format = llm_response
         else:
-            # Se o LLM não retornou uma data válida da lista, mantemos como não correspondência.
-            # Poderíamos adicionar lógica para tentar entender "primeira", "segunda" etc. aqui
-            # ou confiar que o LLM no prompt já faz isso.
-            # Para este exemplo, confiamos no LLM.
             logger.warning(f"Resposta do LLM '{llm_response}' não é uma das datas válidas apresentadas: {available_dates_api_format}")
             chosen_date_api_format = "NENHUMA_CORRESPONDENCIA_OU_AMBIGUA"
 
 
     except Exception as e:
         logger.error(f"Erro ao invocar LLM para validar data escolhida: {e}", exc_info=True)
-        # Mantém chosen_date_api_format como "NENHUMA_CORRESPONDENCIA_OU_AMBIGUA" para o reprompt
 
     if chosen_date_api_format != "NENHUMA_CORRESPONDENCIA_OU_AMBIGUA":
         logger.info(f"Usuário escolheu a data: {chosen_date_api_format}")
-        # TODO: Próximo passo é buscar horários para esta data.
-        # Por enquanto, vamos confirmar a data e finalizar esta parte.
-        # A mensagem de confirmação pode ser gerada pelo próximo nó (de busca de horários).
-        
-        # Aqui você chamaria a API para buscar horários para chosen_date_api_format
-        # e depois formataria a mensagem para o usuário.
-        # Por enquanto, vamos simular que o próximo passo é pedir para o usuário confirmar.
-
-        # Exemplo de mensagem que o próximo nó de horários poderia gerar:
-        # msg_para_horarios = f"Ótimo! Para a data {datetime.strptime(chosen_date_api_format, '%Y-%m-%d').strftime('%d/%m/%Y')}, estou buscando os horários disponíveis..."
         
         return {
             "user_chosen_date": chosen_date_api_format,
-            "response_to_user": None, # O nó de busca de horários gerará a próxima resposta
-            "scheduling_step": "FETCHING_AVAILABLE_TIMES", # Próximo passo LÓGICO
+            "response_to_user": None, 
+            "scheduling_step": "FETCHING_AVAILABLE_TIMES", 
             "current_operation": "SCHEDULING",
-            "available_dates_presented": None # Limpa as datas apresentadas do estado
+            "available_dates_presented": None
         }
     else:
         logger.warning(f"Escolha da data '{user_response_content}' não pôde ser validada ou foi ambígua.")
-        # Gerar mensagem de reprompt usando LLM, incluindo as opções novamente.
-        # Poderíamos ter um prompt específico para reprompt de data.
         reprompt_text = (
             f"Desculpe, {user_full_name}, não consegui identificar qual data você escolheu a partir de '{user_response_content}'.\n"
             f"As opções eram:\n{date_options_display_list_str}\n"
@@ -1048,33 +985,31 @@ def collect_validate_chosen_date_node(state: MainWorkflowState, llm_client: Chat
         )
         return {
             "response_to_user": reprompt_text,
-            "scheduling_step": "VALIDATING_CHOSEN_DATE", # Tenta novamente
+            "scheduling_step": "VALIDATING_CHOSEN_DATE",
             "current_operation": "SCHEDULING"
-            # Mantém available_dates_presented para o próximo ciclo de validação
         }
 
 def fetch_and_present_available_times_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> dict:
     logger.info(f"--- Nó: fetch_and_present_available_times_node (Session ID: {state.get('session_id', 'N/A')}) ---")
     user_full_name = state.get("user_full_name", "Usuário")
     professional_id = state.get("user_chosen_professional_id")
-    chosen_date_str = state.get("user_chosen_date") # Esperado no formato YYYY-MM-DD
-    chosen_turn = state.get("user_chosen_turn") # "MANHA" ou "TARDE"
+    chosen_date_str = state.get("user_chosen_date") 
+    chosen_turn = state.get("user_chosen_turn")
     professional_name = state.get("user_chosen_professional_name", "o profissional escolhido")
 
     if not all([professional_id, chosen_date_str, chosen_turn]):
         logger.error(f"Dados insuficientes para buscar horários: professional_id={professional_id}, chosen_date={chosen_date_str}, chosen_turn={chosen_turn}")
         return {
             "response_to_user": "Desculpe, não consegui obter todas as informações necessárias (profissional, data ou turno) para buscar os horários. Poderia tentar novamente?",
-            "scheduling_step": "SCHEDULING_ERROR" # Ou um passo de fallback apropriado
+            "scheduling_step": "SCHEDULING_ERROR" 
         }
 
     api_url = f"https://back.homologacao.apphealth.com.br:9090/api-vizi/agenda/profissionais/{professional_id}/horarios"
-    headers = {"Authorization": settings.APPHEALTH_API_TOKEN} # Usando settings
+    headers = {"Authorization": settings.APPHEALTH_API_TOKEN} 
     params = {"data": chosen_date_str}
 
     response_to_user = ""
     next_scheduling_step = "AWAITING_TIME_CHOICE"
-    # Agora available_times_presented_for_state será uma lista de dicionários
     available_times_presented_for_state: List[Dict[str, str]] = []
 
 
@@ -1082,42 +1017,36 @@ def fetch_and_present_available_times_node(state: MainWorkflowState, llm_client:
         logger.info(f"Chamando API de horários: GET {api_url} com params: {params}")
         api_response = requests.get(api_url, headers=headers, params=params, timeout=10)
         api_response.raise_for_status()
-        available_slots_from_api = api_response.json() # Lista de dicts com horaInicio, horaFim, etc.
+        available_slots_from_api = api_response.json() 
         logger.info(f"API de horários retornou {len(available_slots_from_api)} slots.")
 
         if not available_slots_from_api:
             response_to_user = f"Desculpe, {user_full_name}, parece que não há horários disponíveis para {professional_name} no dia {datetime.strptime(chosen_date_str, '%Y-%m-%d').strftime('%d/%m/%Y')} ({chosen_turn.lower()}). Gostaria de tentar outra data ou turno?"
-            next_scheduling_step = "FETCHING_AVAILABLE_DATES" # Volta para escolher data
+            next_scheduling_step = "FETCHING_AVAILABLE_DATES"
         else:
-            # Filtrar por turno e preparar dados para o estado e display
             filtered_slots_details = []
             for slot in available_slots_from_api:
                 if slot.get("horaInicio") and slot.get("horaFim"):
                     try:
                         hora_inicio_obj = datetime.strptime(slot["horaInicio"], "%H:%M:%S").time()
                         
-                        # Checar turno
                         if (chosen_turn == "MANHA" and hora_inicio_obj < time(12, 0)) or \
                            (chosen_turn == "TARDE" and hora_inicio_obj >= time(12, 0)):
                             
                             filtered_slots_details.append({
-                                "display": slot["horaInicio"][:5],      # HH:MM para mostrar ao usuário
-                                "horaInicio_api": slot["horaInicio"],   # HH:MM:SS para API
-                                "horaFim_api": slot["horaFim"]          # HH:MM:SS para API
+                                "display": slot["horaInicio"][:5],      
+                                "horaInicio_api": slot["horaInicio"],   
+                                "horaFim_api": slot["horaFim"]
                             })
                     except ValueError as ve:
                         logger.warning(f"Slot de horário com formato de hora inválido da API: {slot}. Erro: {ve}")
-                        continue # Pula este slot
+                        continue
             
-            # Remover duplicatas baseadas no horário de display (HH:MM) e pegar no máximo X horários
-            # Isso evita mostrar "08:00" duas vezes se por acaso a API retornar com segundos diferentes mas o mesmo HH:MM
             unique_filtered_slots_temp = {}
             for slot_detail in filtered_slots_details:
                 if slot_detail["display"] not in unique_filtered_slots_temp:
                     unique_filtered_slots_temp[slot_detail["display"]] = slot_detail
             
-            # Ordenar pelos horários de display antes de fatiar
-            # Convertendo para datetime para ordenar corretamente (ex: "13:00" antes de "08:00" se não for feito)
             sorted_unique_slots = sorted(
                 list(unique_filtered_slots_temp.values()), 
                 key=lambda x: datetime.strptime(x["display"], "%H:%M").time()
@@ -1125,15 +1054,14 @@ def fetch_and_present_available_times_node(state: MainWorkflowState, llm_client:
 
             if not sorted_unique_slots:
                  response_to_user = f"Desculpe, {user_full_name}, após filtrar pelo turno da {chosen_turn.lower()}, não encontramos horários disponíveis para {professional_name} no dia {datetime.strptime(chosen_date_str, '%Y-%m-%d').strftime('%d/%m/%Y')}. Gostaria de tentar outro turno ou data?"
-                 next_scheduling_step = "VALIDATING_TURN_PREFERENCE" # Volta para escolher turno ou data
+                 next_scheduling_step = "VALIDATING_TURN_PREFERENCE" 
             else:
-                available_times_presented_for_state = sorted_unique_slots[:3] # Pega os 3 primeiros
+                available_times_presented_for_state = sorted_unique_slots[:3]
                 
                 if not available_times_presented_for_state:
                     response_to_user = f"Desculpe, {user_full_name}, não consegui encontrar horários para o turno da {chosen_turn.lower()} no dia {datetime.strptime(chosen_date_str, '%Y-%m-%d').strftime('%d/%m/%Y')} para {professional_name}. Gostaria de tentar outra data ou turno?"
                     next_scheduling_step = "VALIDATING_TURN_PREFERENCE"
                 else:
-                    # Apenas os horários de início (display) para a lista do prompt
                     times_list_for_prompt_display = [
                         f"{i+1}. {slot_data['display']}" for i, slot_data in enumerate(available_times_presented_for_state)
                     ]
@@ -1173,7 +1101,6 @@ def coletar_validar_horario_escolhido_node(state: MainWorkflowState, llm_client:
     logger.info(f"--- Nó: coletar_validar_horario_escolhido_node (Session ID: {state.get('session_id', 'N/A')}) ---")
     user_response_content = get_last_user_message_content(state["messages"])
     
-    # available_times_presented agora é uma lista de dicts: [{'display': 'HH:MM', 'horaInicio_api': 'HH:MM:SS', 'horaFim_api': 'HH:MM:SS'}, ...]
     available_times_details_list = state.get("available_times_presented", []) 
     user_full_name = state.get("user_full_name", "Paciente")
     chosen_specialty = state.get("user_chosen_specialty", "a especialidade")
@@ -1196,12 +1123,9 @@ def coletar_validar_horario_escolhido_node(state: MainWorkflowState, llm_client:
             "messages": AIMessage(content="Desculpe, ocorreu um problema e não consigo ver os horários que apresentei. Vamos tentar buscar novamente.")
         }
 
-    # Preparar listas para o prompt do LLM
-    # time_options_display_list_str é a lista numerada "1. HH:MM\n2. HH:MM..."
     time_options_display_list_str = "\n".join([
         f"{i+1}. {slot_details['display']}" for i, slot_details in enumerate(available_times_details_list)
     ])
-    # time_options_internal_list_str é uma string dos horários de display "HH:MM, HH:MM, ..."
     time_options_internal_list_str = ", ".join([
         slot_details['display'] for slot_details in available_times_details_list
     ])
@@ -1213,15 +1137,14 @@ def coletar_validar_horario_escolhido_node(state: MainWorkflowState, llm_client:
         prompt_messages = VALIDATE_CHOSEN_TIME_PROMPT_TEMPLATE.format_messages(
             time_options_display_list_str=time_options_display_list_str,
             user_response=user_response_content,
-            time_options_internal_list_str=time_options_internal_list_str # LLM valida contra o formato HH:MM
+            time_options_internal_list_str=time_options_internal_list_str
         )
         llm_response = llm_client.invoke(prompt_messages)
-        chosen_time_display_from_llm = llm_response.content.strip() # Espera-se HH:MM
+        chosen_time_display_from_llm = llm_response.content.strip() 
         logger.info(f"LLM para validação de horário (display HH:MM) retornou: '{chosen_time_display_from_llm}'")
     except Exception as e:
         logger.error(f"Erro ao invocar LLM para validar horário escolhido: {e}", exc_info=True)
     
-    # Agora, encontrar o slot completo (com horaInicio_api e horaFim_api) correspondente ao horário de display validado pelo LLM
     selected_slot_details: Optional[Dict[str, str]] = None
     if chosen_time_display_from_llm != "NENHUMA_CORRESPONDENCIA_OU_AMBIGUA":
         for slot_details in available_times_details_list:
@@ -1230,8 +1153,8 @@ def coletar_validar_horario_escolhido_node(state: MainWorkflowState, llm_client:
                 break
     
     if selected_slot_details:
-        user_chosen_time_hhmm = selected_slot_details['display'] # HH:MM
-        user_chosen_time_fim_api = selected_slot_details['horaFim_api'] # HH:MM:SS
+        user_chosen_time_hhmm = selected_slot_details['display'] 
+        user_chosen_time_fim_api = selected_slot_details['horaFim_api']
         
         logger.info(f"Usuário escolheu o horário (display): {user_chosen_time_hhmm}. Detalhes completos do slot: {selected_slot_details}")
         
@@ -1248,7 +1171,7 @@ def coletar_validar_horario_escolhido_node(state: MainWorkflowState, llm_client:
                 chosen_specialty=chosen_specialty,
                 chosen_professional_name=chosen_professional_name,
                 chosen_date_display=chosen_date_display_for_confirmation,
-                chosen_time=user_chosen_time_hhmm # Mostrar HH:MM para o usuário
+                chosen_time=user_chosen_time_hhmm
             )
             confirmation_response = llm_client.invoke(confirmation_prompt_messages)
             response_text_for_user = confirmation_response.content.strip()
@@ -1257,13 +1180,13 @@ def coletar_validar_horario_escolhido_node(state: MainWorkflowState, llm_client:
             response_text_for_user = f"Agendamento para {chosen_specialty} com {chosen_professional_name} no dia {chosen_date_display_for_confirmation} às {user_chosen_time_hhmm}. Confirmar?"
 
         return {
-            "user_chosen_time": user_chosen_time_hhmm, # Salva HH:MM (o que o usuário escolheu e viu)
-            "user_chosen_time_fim": user_chosen_time_fim_api, # Salva HH:MM:SS (para a API de agendamento)
+            "user_chosen_time": user_chosen_time_hhmm, 
+            "user_chosen_time_fim": user_chosen_time_fim_api,
             "response_to_user": response_text_for_user,
             "scheduling_step": "AWAITING_FINAL_CONFIRMATION", 
             "current_operation": "SCHEDULING", 
             "messages": AIMessage(content=response_text_for_user),
-            "available_times_presented": None # Limpa a lista do estado após a escolha
+            "available_times_presented": None
         }
     else:
         logger.warning(f"Escolha do horário '{user_response_content}' (LLM: '{chosen_time_display_from_llm}') não pôde ser validada ou não encontrada nos detalhes dos slots.")
@@ -1276,7 +1199,6 @@ def coletar_validar_horario_escolhido_node(state: MainWorkflowState, llm_client:
             "response_to_user": reprompt_text,
             "scheduling_step": "AWAITING_TIME_CHOICE", 
             "messages": AIMessage(content=reprompt_text)
-            # Mantém available_times_presented para a próxima tentativa
         }
 
 def process_retry_option_choice_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> dict:
@@ -1291,33 +1213,25 @@ def process_retry_option_choice_node(state: MainWorkflowState, llm_client: ChatO
     
         if not user_message_content:
             logger.warning("Nenhuma resposta do usuário para processar a opção de nova tentativa.")
-            # Repetir a pergunta original sobre tentar novamente (poderia ser um prompt mais específico)
-            # Esta parte precisaria de um prompt para gerar a pergunta novamente.
-            # Por simplicidade, vamos apenas manter o estado e esperar uma nova mensagem.
-            # Ou, melhor, pedir para o usuário ser claro.
             updates["response_to_user"] = "Não entendi sua resposta. Gostaria de tentar com outro profissional, outra especialidade, ou verificar mais tarde?"
             updates["scheduling_step"] = "AWAITING_RETRY_OPTION_AFTER_NO_AVAILABILITY" # Mantém o passo
             updates["messages"] = AIMessage(content=updates["response_to_user"])
             return updates
     
-        # Usar LLM para classificar a intenção do usuário (outro profissional, outra especialidade, cancelar/mais tarde)
-        # Poderíamos criar um prompt específico para isso. Exemplo simplificado:
         normalized_response = user_message_content.lower()
         
-        # Keyword-based simples por agora, idealmente um LLM com prompt dedicado para classificar
         if "outro profissional" in normalized_response or "outro médico" in normalized_response or "outro dr" in normalized_response:
             logger.info(f"Usuário '{user_full_name}' optou por tentar outro profissional na mesma especialidade.")
             updates["user_chosen_professional_id"] = None
             updates["user_chosen_professional_name"] = None
-            updates["user_provided_professional_name"] = None # Limpa nome fornecido anteriormente
-            updates["professional_preference_type"] = None # Força perguntar novamente a preferência
-            updates["user_chosen_turn"] = None # Resetar turno, pois pode ser diferente para outro profissional
+            updates["user_provided_professional_name"] = None 
+            updates["professional_preference_type"] = None 
+            updates["user_chosen_turn"] = None
             updates["available_dates_presented"] = None
             updates["user_chosen_date"] = None
             updates["available_times_presented"] = None
-            # Direciona para o nó que pergunta sobre a preferência de profissional
             updates["scheduling_step"] = "REQUESTING_PROFESSIONAL_PREFERENCE"
-            updates["response_to_user"] = None # O nó de destino fará a pergunta
+            updates["response_to_user"] = None
     
         elif "outra especialidade" in normalized_response or "mudar especialidade" in normalized_response:
             logger.info(f"Usuário '{user_full_name}' optou por tentar outra especialidade.")
@@ -1331,32 +1245,24 @@ def process_retry_option_choice_node(state: MainWorkflowState, llm_client: ChatO
             updates["available_dates_presented"] = None
             updates["user_chosen_date"] = None
             updates["available_times_presented"] = None
-            # Direciona para o nó que coleta e valida a nova especialidade
             updates["scheduling_step"] = "VALIDATING_SPECIALTY" 
-            updates["response_to_user"] = None # O nó de destino fará a pergunta (Qual especialidade?)
+            updates["response_to_user"] = None 
     
         elif "não" in normalized_response or "cancelar" in normalized_response or "mais tarde" in normalized_response or "nenhum" in normalized_response:
             logger.info(f"Usuário '{user_full_name}' optou por não prosseguir ou verificar mais tarde.")
             updates["response_to_user"] = f"Entendido, {user_full_name}. Se mudar de ideia ou precisar de algo mais, é só chamar!"
-            updates["scheduling_step"] = None # Limpa o passo de agendamento
-            updates["current_operation"] = None # Finaliza a operação de agendamento
+            updates["scheduling_step"] = None 
+            updates["current_operation"] = None
             updates["messages"] = AIMessage(content=updates["response_to_user"])
         else:
             logger.warning(f"Resposta não clara do usuário ('{user_message_content}') para opção de nova tentativa.")
-            # Poderia usar LLM para gerar uma mensagem de reprompt mais inteligente
             updates["response_to_user"] = (
                 f"Desculpe, {user_full_name}, não entendi bem. Se não há datas para este profissional, "
                 "você gostaria de tentar com 'outro profissional' (na mesma especialidade), "
                 "tentar 'outra especialidade', ou 'cancelar' o agendamento por ora?"
             )
-            updates["scheduling_step"] = "AWAITING_RETRY_OPTION_AFTER_NO_AVAILABILITY" # Mantém para o usuário tentar de novo
+            updates["scheduling_step"] = "AWAITING_RETRY_OPTION_AFTER_NO_AVAILABILITY" 
             updates["messages"] = AIMessage(content=updates["response_to_user"])
-            
-        # Garante que 'messages' seja atualizado se uma resposta for gerada aqui.
-        # No LangGraph, o retorno do nó atualiza o estado. Se response_to_user é setado,
-        # o sistema principal deve adicionar a AIMessage correspondente.
-        # O exemplo acima já adiciona AIMessage quando response_to_user é setado neste nó.
-        # Se response_to_user for None, o próximo nó no fluxo gerará a mensagem.
     
         return updates
 
@@ -1448,10 +1354,7 @@ def fetch_and_present_available_dates_node(state: MainWorkflowState, llm_client:
     """
     logger.debug("--- Nó Agendamento: fetch_and_present_available_dates_node ---")
     
-    # TODO: Obter API_TOKEN e HEADERS de forma segura (ex: config, secrets)
-    # Por enquanto, vamos simular, mas em produção isso precisa ser robusto.
-    # Substitua pelo seu token real e mecanismo de obtenção de headers
-    API_TOKEN = "TXH3xnwI7P4Sh5dS71aRDsQzDrx1GKeW8jXd5eHDpqTOi" # Exemplo - NÃO USE EM PRODUÇÃO
+    API_TOKEN = "TXH3xnwI7P4Sh5dS71aRDsQzDrx1GKeW8jXd5eHDpqTOi"
     api_headers = {
         "Authorization": f"{API_TOKEN}",
         "Content-Type": "application/json"
@@ -1460,11 +1363,10 @@ def fetch_and_present_available_dates_node(state: MainWorkflowState, llm_client:
     id_profissional = state.get("user_chosen_professional_id")
     nome_profissional = state.get("user_chosen_professional_name", "O profissional selecionado")
     user_full_name = state.get("user_full_name", "Paciente")
-    user_chosen_turn = state.get("user_chosen_turn", "qualquer turno") # Para a mensagem
+    user_chosen_turn = state.get("user_chosen_turn", "qualquer turno")
 
     if not id_profissional:
         logger.error("ID do profissional não encontrado no estado para buscar datas.")
-        # Gerar mensagem de erro com LLM para ser mais natural
         error_prompt = ChatPromptTemplate.from_template(
             "Você é um assistente de agendamento. Informe ao usuário {user_name} que ocorreu um problema "
             "ao tentar identificar o profissional para buscar as datas e que será necessário tentar novamente a seleção do profissional."
@@ -1472,54 +1374,44 @@ def fetch_and_present_available_dates_node(state: MainWorkflowState, llm_client:
         error_response_content = llm_client.invoke(error_prompt.format_messages(user_name=user_full_name)).content.strip()
         return {
             "response_to_user": error_response_content,
-            "scheduling_step": "REQUESTING_PROFESSIONAL_PREFERENCE", # Volta para escolher profissional
+            "scheduling_step": "REQUESTING_PROFESSIONAL_PREFERENCE", 
             "current_operation": "SCHEDULING",
-            "user_chosen_professional_id": None, # Limpa
-            "user_chosen_professional_name": None # Limpa
+            "user_chosen_professional_id": None, 
+            "user_chosen_professional_name": None
         }
 
     hoje = date.today()
-    datas_validas_api_format = [] # Lista para armazenar "AAAA-MM-DD"
+    datas_validas_api_format = [] 
 
-    # Consultar para o mês atual e o próximo para garantir opções (como no agentv1.py)
-    for i in range(2): # Consultar 2 meses
+    
+    for i in range(2):
         data_alvo_consulta = hoje + timedelta(days=30 * i)
         mes_consulta = data_alvo_consulta.strftime("%m")
         ano_consulta = data_alvo_consulta.strftime("%Y")
         
-        # URL da API de datas (ajuste se necessário)
         url = f"https://back.homologacao.apphealth.com.br:9090/api-vizi/agenda/profissionais/{id_profissional}/datas"
         params = {"mes": mes_consulta, "ano": ano_consulta}
         logger.info(f"Consultando API de datas: {url} com params: {params}")
 
         try:
-            # Aqui usaremos 'requests' diretamente como na sua PoC.
-            # Em uma arquitetura DDD completa, isso estaria em um serviço de infraestrutura.
-            import requests # Adicionar importação no topo do arquivo se não estiver
+            import requests
             response = requests.get(url, headers=api_headers, params=params, timeout=10)
-            response.raise_for_status() # Levanta exceção para erros HTTP 4xx/5xx
-            datas_mes_api = response.json() # Espera-se uma lista de dicts como [{"data": "YYYY-MM-DD"}, ...]
+            response.raise_for_status() 
+            datas_mes_api = response.json() 
 
             if datas_mes_api and isinstance(datas_mes_api, list):
                 for item_data in datas_mes_api:
                     if isinstance(item_data, dict) and "data" in item_data:
-                        # Validação básica do formato da data (AAAA-MM-DD)
                         try:
                             datetime.strptime(item_data["data"], "%Y-%m-%d")
                             datas_validas_api_format.append(item_data["data"])
                         except ValueError:
                             logger.warning(f"Formato de data inválido da API: {item_data['data']}")
             
-            # Remover duplicatas e ordenar
             datas_validas_api_format = sorted(list(set(datas_validas_api_format)))
             
-            # Filtrar datas para serem a partir de hoje (ou D+N, conforme regra de negócio)
-            # A API já deveria fazer isso, mas uma checagem extra pode ser útil.
-            # Por simplicidade, vamos confiar que a API retorna apenas datas futuras válidas.
-
         except requests.exceptions.HTTPError as e:
             logger.error(f"Erro HTTP ao consultar API de datas: {e.response.status_code} - {e.response.text if e.response else 'Sem corpo de resposta'}")
-            # Tentar gerar mensagem de erro amigável com LLM
             error_prompt_http = ChatPromptTemplate.from_template(
                 "Você é um assistente de agendamento. Informe ao usuário {user_name} que houve um problema técnico "
                 "(código de erro {status_code}) ao tentar buscar as datas disponíveis e peça para tentar mais tarde."
@@ -1527,10 +1419,10 @@ def fetch_and_present_available_dates_node(state: MainWorkflowState, llm_client:
             error_response_content = llm_client.invoke(error_prompt_http.format_messages(user_name=user_full_name, status_code=e.response.status_code if e.response else "desconhecido")).content.strip()
             return {
                 "response_to_user": error_response_content,
-                "scheduling_step": "REQUESTING_TURN_PREFERENCE", # Volta para pedir turno, talvez o usuário queira mudar algo
+                "scheduling_step": "REQUESTING_TURN_PREFERENCE",
                 "current_operation": "SCHEDULING"
             }
-        except requests.exceptions.RequestException as e: # Outros erros (conexão, timeout)
+        except requests.exceptions.RequestException as e: 
             logger.error(f"Erro de requisição ao consultar API de datas: {e}")
             error_prompt_req = ChatPromptTemplate.from_template(
                 "Você é um assistente de agendamento. Informe ao usuário {user_name} que não foi possível conectar ao sistema "
@@ -1542,9 +1434,8 @@ def fetch_and_present_available_dates_node(state: MainWorkflowState, llm_client:
                 "scheduling_step": "REQUESTING_TURN_PREFERENCE",
                 "current_operation": "SCHEDULING"
             }
-        except ValueError as json_err: # Erro ao decodificar JSON
+        except ValueError as json_err: 
             logger.error(f"Erro ao decodificar JSON da API de datas: {json_err}")
-            # Mensagem genérica para o usuário
             return {
                 "response_to_user": "Desculpe, {user_name}, recebi uma resposta inesperada do sistema de agendamento ao buscar as datas. Por favor, tente novamente em alguns instantes.",
                 "scheduling_step": "REQUESTING_TURN_PREFERENCE",
@@ -1552,12 +1443,11 @@ def fetch_and_present_available_dates_node(state: MainWorkflowState, llm_client:
             }
 
 
-        if len(datas_validas_api_format) >= 3: # Se já temos 3 ou mais, paramos
+        if len(datas_validas_api_format) >= 3:
             break
             
     if not datas_validas_api_format:
         logger.info(f"Nenhuma data disponível encontrada para Dr(a). {nome_profissional} nos próximos períodos.")
-        # Usar LLM para gerar a mensagem de "nenhuma data"
         no_dates_prompt = ChatPromptTemplate.from_template(
             "Você é um assistente de agendamento. Informe ao usuário {user_name} que, no momento, não foram encontradas datas disponíveis "
             "para o profissional {professional_name}. Pergunte se ele gostaria de tentar com outro profissional ou especialidade, ou verificar mais tarde."
@@ -1565,18 +1455,15 @@ def fetch_and_present_available_dates_node(state: MainWorkflowState, llm_client:
         no_dates_response = llm_client.invoke(no_dates_prompt.format_messages(user_name=user_full_name, professional_name=nome_profissional)).content.strip()
         return {
             "response_to_user": no_dates_response,
-            "scheduling_step": "AWAITING_RETRY_OPTION_AFTER_NO_AVAILABILITY", # Volta para escolher profissional/especialidade
+            "scheduling_step": "AWAITING_RETRY_OPTION_AFTER_NO_AVAILABILITY",
             "current_operation": "SCHEDULING",
             "available_dates_presented": []
         }
 
-    # Apresentar até 3 datas
     datas_para_apresentar_api_format = datas_validas_api_format[:3]
     
-    # Formatar para o usuário (DD/MM/AAAA)
     datas_formatadas_usuario = [datetime.strptime(d, "%Y-%m-%d").strftime("%d/%m/%Y") for d in datas_para_apresentar_api_format]
     
-    # Usar LLM para gerar a mensagem de apresentação das datas
     present_dates_prompt_str = """
     Você é um assistente de agendamento.
     O usuário {user_name} escolheu o turno da {chosen_turn}.
@@ -1590,7 +1477,6 @@ def fetch_and_present_available_dates_node(state: MainWorkflowState, llm_client:
     """
     present_dates_prompt = ChatPromptTemplate.from_template(present_dates_prompt_str)
     
-    # Criar a string da lista de datas para o prompt
     lista_datas_str_prompt = ""
     for i, data_fmt_usr in enumerate(datas_formatadas_usuario):
         lista_datas_str_prompt += f"{i+1}. {data_fmt_usr}\n"
@@ -1598,7 +1484,7 @@ def fetch_and_present_available_dates_node(state: MainWorkflowState, llm_client:
     mensagem_apresentacao_datas = llm_client.invoke(
         present_dates_prompt.format_messages(
             user_name=user_full_name,
-            chosen_turn=user_chosen_turn.lower(), # "manha" ou "tarde"
+            chosen_turn=user_chosen_turn.lower(),
             professional_name=nome_profissional,
             available_dates_list_str=lista_datas_str_prompt.strip()
         )
@@ -1606,9 +1492,9 @@ def fetch_and_present_available_dates_node(state: MainWorkflowState, llm_client:
 
     return {
         "response_to_user": mensagem_apresentacao_datas,
-        "scheduling_step": "VALIDATING_CHOSEN_DATE", # Próximo passo lógico
+        "scheduling_step": "VALIDATING_CHOSEN_DATE", 
         "current_operation": "SCHEDULING",
-        "available_dates_presented": datas_para_apresentar_api_format # Salva no formato AAAA-MM-DD
+        "available_dates_presented": datas_para_apresentar_api_format 
     }
 
 def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> dict:
@@ -1883,24 +1769,18 @@ def get_main_conversation_graph_definition() -> StateGraph:
     workflow_builder = StateGraph(MainWorkflowState)
     llm_instance = get_llm_client()
 
-    # Nós do Grafo Principal
     workflow_builder.add_node("dispatcher", dispatcher_node)
     workflow_builder.add_node("categorize_intent", partial(categorize_node, llm_client=llm_instance))
     workflow_builder.add_node("handle_greeting_farewell", partial(greeting_farewell_node, llm_client=llm_instance))
     workflow_builder.add_node("handle_fallback_placeholder", placeholder_fallback_node)
-
-    # Nós do Fluxo de Agendamento (integrados)
     workflow_builder.add_node("solicitar_nome_agendamento_node", partial(solicitar_nome_agendamento_node, llm_client=llm_instance))
     workflow_builder.add_node("coletar_validar_nome_agendamento_node", partial(coletar_validar_nome_agendamento_node, llm_client=llm_instance))
     workflow_builder.add_node("coletar_validar_especialidade_node", partial(coletar_validar_especialidade_node, llm_client=llm_instance)) 
     workflow_builder.add_node("solicitar_preferencia_profissional_node", partial(solicitar_preferencia_profissional_node, llm_client=llm_instance))
     workflow_builder.add_node("coletar_classificar_preferencia_profissional_node", partial(coletar_classificar_preferencia_profissional_node, llm_client=llm_instance))
     workflow_builder.add_node("processing_professional_logic_node", partial(processing_professional_logic_node, llm_client=llm_instance))
-
     workflow_builder.add_node("list_available_professionals_node", partial(list_available_professionals_node, llm_client=llm_instance))
     workflow_builder.add_node("collect_validate_chosen_professional_node", partial(collect_validate_chosen_professional_node, llm_client=llm_instance))
-    
-    # NOVOS NÓS PARA TURNO
     workflow_builder.add_node("solicitar_turno_node", partial(solicitar_turno_node, llm_client=llm_instance))
     workflow_builder.add_node("coletar_validar_turno_node", partial(coletar_validar_turno_node, llm_client=llm_instance))
     workflow_builder.add_node("fetch_and_present_available_dates_node", partial(fetch_and_present_available_dates_node, llm_client=llm_instance))
@@ -1913,7 +1793,6 @@ def get_main_conversation_graph_definition() -> StateGraph:
 
     workflow_builder.set_entry_point("dispatcher")
 
-    # Roteamento a partir do dispatcher inicial
     workflow_builder.add_conditional_edges(
         "dispatcher",
         route_initial_or_ongoing,
@@ -1923,7 +1802,6 @@ def get_main_conversation_graph_definition() -> StateGraph:
         }
     )
 
-    # Roteamento após a categorização da intenção
     workflow_builder.add_conditional_edges(
         "categorize_intent",
         route_after_categorization,
@@ -1963,8 +1841,8 @@ def get_main_conversation_graph_definition() -> StateGraph:
         "processing_professional_logic_node",
         route_after_processing_professional_logic,
         {
-            END: END,  # Se response_to_user foi setado por processing_professional_logic_node
-            "route_scheduling_step": "route_scheduling_step" # Se for para continuar internamente (ex: para listar profissionais)
+            END: END,
+            "route_scheduling_step": "route_scheduling_step"
         }
     )
 
@@ -1980,21 +1858,15 @@ def get_main_conversation_graph_definition() -> StateGraph:
     # Saídas dos nós
     workflow_builder.add_edge("handle_greeting_farewell", END)
     workflow_builder.add_edge("handle_fallback_placeholder", END)
-    
-    # Nós que esperam input do usuário e vão para END (para serem pegos pelo dispatcher na próxima rodada)
-    # ou que direcionam para o route_scheduling_step para continuar o fluxo interno.
     workflow_builder.add_edge("solicitar_nome_agendamento_node", END) 
     workflow_builder.add_edge("coletar_validar_nome_agendamento_node", END)
-    workflow_builder.add_edge("coletar_validar_especialidade_node", END) # Continua para solicitar preferência
+    workflow_builder.add_edge("coletar_validar_especialidade_node", END)
     workflow_builder.add_edge("solicitar_preferencia_profissional_node", END)
     workflow_builder.add_edge("coletar_classificar_preferencia_profissional_node", "route_scheduling_step")
-
-    workflow_builder.add_edge("list_available_professionals_node", END) # Espera escolha do usuário
+    workflow_builder.add_edge("list_available_professionals_node", END)
     workflow_builder.add_edge("collect_validate_chosen_professional_node", "route_scheduling_step") 
-    
-    # NOVAS ARESTAS PARA TURNO
-    workflow_builder.add_edge("solicitar_turno_node", END) # Espera resposta do usuário
-    workflow_builder.add_edge("coletar_validar_turno_node", "route_scheduling_step") # Continua para buscar datas
+    workflow_builder.add_edge("solicitar_turno_node", END) 
+    workflow_builder.add_edge("coletar_validar_turno_node", "route_scheduling_step")
     workflow_builder.add_edge("fetch_and_present_available_dates_node", END)
     workflow_builder.add_edge("collect_validate_chosen_date_node", "route_scheduling_step")
     workflow_builder.add_edge("fetch_and_present_available_times_node", END)
@@ -2002,7 +1874,7 @@ def get_main_conversation_graph_definition() -> StateGraph:
     workflow_builder.add_edge("process_final_scheduling_confirmation_node", END)
     return workflow_builder
 
-# === FUNÇÃO DE EXECUÇÃO DO FLUXO (Permanece a mesma em sua lógica interna) ===
+# === FUNÇÃO DE EXECUÇÃO DO FLUXO ===
 async def arun_main_conversation_flow(
     user_text: str,
     session_id: str,
@@ -2017,47 +1889,38 @@ async def arun_main_conversation_flow(
     workflow_definition = get_main_conversation_graph_definition()
     graph_with_persistence = workflow_definition.compile(checkpointer=checkpointer)
     
-    final_state: Optional[MainWorkflowState] = None # Tipo explícito
-    # A mensagem do usuário é a única nova mensagem a ser processada no início de cada turno.
-    # O histórico é gerenciado pelo checkpointer.
+    final_state: Optional[MainWorkflowState] = None
+    
     input_data = {"messages": [HumanMessage(content=user_text)]} 
     config = {"configurable": {"thread_id": session_id}}
     
     logger.debug(f"Invocando grafo principal para session_id: {session_id} com input_data: {input_data}")
 
     try:
-        # Usar astream para iterar sobre os chunks de eventos do grafo
         async for event_chunk in graph_with_persistence.astream(input_data, config=config, stream_mode="values"):
-            # O último chunk no modo "values" é o estado final do grafo para este passo
             final_state = event_chunk 
             logger.debug(f"Chunk do grafo (session_id {session_id}): {event_chunk}")
     except Exception as graph_error:
         logger.error(f"Erro ao invocar o grafo LangGraph para thread {session_id}: {graph_error}", exc_info=True)
         return "Desculpe, ocorreu um erro interno ao processar sua solicitação."
 
-    # Após o loop, final_state contém o estado completo após a execução do grafo.
     if final_state:
         logger.info(f"Estado final do grafo (session_id {session_id}): {final_state}")
         
-        # Recuperar a mensagem de resposta que foi definida pelos nós
         response_content_to_send = final_state.get("response_to_user")
 
         if response_content_to_send:
             logger.info(f"Resposta do arun_main_conversation_flow (session_id {session_id}): '{response_content_to_send}'")
             return response_content_to_send
         else:
-            # Se response_to_user não foi setado, mas há mensagens,
-            # pode ser um caso onde o fluxo terminou sem uma resposta explícita para este turno.
-            # Verificamos a última mensagem do AI no histórico, mas isso é menos ideal.
-            # A boa prática é que todo nó que deve responder ao usuário sete "response_to_user".
             all_messages = final_state.get('messages', [])
             if all_messages:
                 last_message_obj = all_messages[-1]
                 if isinstance(last_message_obj, AIMessage):
                     logger.warning(f"'response_to_user' não definido, mas última mensagem é AIMessage: '{last_message_obj.content}'")
-                    return last_message_obj.content # Não ideal, mas um fallback
+                    return last_message_obj.content 
             logger.warning(f"Nenhum 'response_to_user' definido no estado final e nenhuma AIMessage clara no final do histórico para session_id {session_id}.")
-            return None # Ou uma mensagem de erro padrão
+            return None 
             
     logger.warning(f"Nenhum estado final retornado pelo LangGraph para session_id {session_id}.")
     return None

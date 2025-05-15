@@ -3,25 +3,20 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# CONFIGURAR LOGGING GLOBAL
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 import os
-from fastapi import FastAPI, Request # Adicionar Request
+from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from typing import Optional
 
-# --- Importações para o Lifespan ---
 from psycopg_pool import AsyncConnectionPool
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # --- Código a ser executado ANTES da aplicação iniciar ---
     logger.info("Iniciando aplicação e ciclo de vida (lifespan)...")
-
-    # 1. Ler variáveis de ambiente para o banco de dados
     db_user = os.getenv("POSTGRES_USER")
     db_password = os.getenv("POSTGRES_PASSWORD")
     db_host = os.getenv("POSTGRES_HOST", "localhost")
@@ -35,7 +30,6 @@ async def lifespan(app: FastAPI):
         logger.info(f"Lifespan: String de conexão para o pool: {conninfo_str_lifespan.replace(db_password, '********') if db_password else conninfo_str_lifespan}")
         
         try:
-            # 2. Criar o pool usando context manager
             async with AsyncConnectionPool(
                 conninfo=conninfo_str_lifespan,
                 min_size=1,
@@ -44,7 +38,6 @@ async def lifespan(app: FastAPI):
                 app.state.db_pool = pool
                 logger.info("Lifespan: AsyncConnectionPool criado e armazenado em app.state.db_pool.")
 
-                # 3. Executar o setup do AsyncPostgresSaver
                 logger.info("Lifespan: Tentando executar AsyncPostgresSaver.setup()...")
                 async with pool.connection() as setup_conn:
                     await setup_conn.set_autocommit(True)
@@ -65,7 +58,6 @@ async def lifespan(app: FastAPI):
         logger.error("Lifespan: Variáveis de ambiente para o banco de dados estão ausentes ou incompletas. Pool de conexões NÃO será criado. O Checkpointer setup NÃO será executado.")
         yield
 
-    # --- Código a ser executado APÓS a aplicação parar ---
     logger.info("Encerrando aplicação e ciclo de vida (lifespan)...")
     if hasattr(app.state, 'db_pool') and app.state.db_pool:
         logger.info("Lifespan: Fechando AsyncConnectionPool...")
@@ -73,7 +65,6 @@ async def lifespan(app: FastAPI):
         logger.info("Lifespan: AsyncConnectionPool fechado.")
 
 
-# --- Importações dos módulos da aplicação APÓS dotenv e logging básico ---
 from app.interfaces.api.v1.endpoints import whatsapp_webhook, zapi_webhook
 
 app = FastAPI(
@@ -95,7 +86,5 @@ async def read_root():
 
 app.include_router(zapi_webhook.router, prefix="/api/v1/webhooks", tags=["WhatsApp Z-API"])
 
-# Se você estiver usando uvicorn.run() programaticamente, ele viria aqui.
-# Mas como você usa 'poetry run uvicorn app.main:app', esta parte não é necessária aqui.
 # if __name__ == "__main__":
 #     uvicorn.run(app, host="0.0.0.0", port=8000)

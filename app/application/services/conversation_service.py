@@ -23,25 +23,24 @@ def categorize_intent_service(user_query: str, llm_client: ChatOpenAI) -> str:
     Categoriza a intenção do usuário usando o LLM.
     """
     if not user_query:
-        return "Indefinido" # Ou uma categoria padrão de erro/fallback
+        return "Indefinido"
     
     chain = CATEGORIZATION_PROMPT_TEMPLATE | llm_client
     try:
         response = chain.invoke({"user_query": user_query})
         categoria_llm = response.content
-        # Limpeza adicional para garantir que apenas a categoria seja retornada
         categoria_limpa = categoria_llm.replace('Categoria: ', '').replace('"', '').strip()
         return categoria_limpa
     except Exception as e:
         logger.error(f"Erro durante a categorização com LLM: {e}")
-        return "Erro na Categorização" # Categoria de fallback em caso de erro
+        return "Erro na Categorização"
 
 def generate_greeting_farewell_service(user_query: Optional[str], llm_client: ChatOpenAI) -> str:
     """
     Gera uma resposta de saudação ou despedida humanizada usando o LLM.
     """
     if not user_query:
-        user_query = "Olá" # Default para o prompt
+        user_query = "Olá"
 
     chain = GREETING_FAREWELL_PROMPT_TEMPLATE | llm_client
     logger.info(f"Geração de saudação/despedida com LLM: {user_query}")
@@ -51,7 +50,6 @@ def generate_greeting_farewell_service(user_query: Optional[str], llm_client: Ch
         return response.content.strip()
     except Exception as e:
         logger.error(f"Erro ao gerar saudação/despedida com LLM: {e}")
-        # Fallback para uma resposta genérica em caso de erro do LLM
         if user_query and any(term in user_query.lower() for term in ["tchau", "até mais", "obrigado", "adeus", "encerrar", "fim"]):
             return "Até logo! Se precisar de algo mais, estou à disposição."
         return "Olá! Como posso ajudar?"

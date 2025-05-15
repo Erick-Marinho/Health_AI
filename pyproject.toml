@@ -19,6 +19,7 @@ psycopg = {version = ">=3.2.8", extras = ["binary"]}
 psycopg-pool = ">=3.2.6"
 langchain-core = "^0.3.59"
 langchain-openai = "^0.3.16"
+gunicorn = "^21.2.0"
 
 [project]
 name = "app"

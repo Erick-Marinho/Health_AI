@@ -6,7 +6,6 @@ from pydantic import ValidationError
 from app.interfaces.models.zapi_payload import ZapiReceivedMessagePayload
 from app.application.workflows.main_conversation_flow import arun_main_conversation_flow
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-# <<< NOVO IMPORT >>> Importar o ZapiClient
 from app.infrastructure.clients.zapi_client import ZapiClient
 
 logger = logging.getLogger(__name__)
@@ -23,7 +22,7 @@ async def process_incoming_zapi_message(
             logger.info(f"ZAPI_WEBHOOK: Mensagem de {payload.phone} (ID: {payload.message_id}) é 'fromMe'. Ignorando.")
             return
 
-        if payload.is_group: # Adicionado 'is_group' ao invés de 'payload.group'
+        if payload.is_group:
             logger.info(f"ZAPI_WEBHOOK: Mensagem de {payload.phone} (ID: {payload.message_id}) é de grupo. Ignorando por enquanto.")
             return
 
@@ -58,25 +57,21 @@ async def process_incoming_zapi_message(
         if agent_response_text:
             logger.info(f"ZAPI_WEBHOOK: Resposta da IA para {session_id}: {agent_response_text}")
             
-            # <<< MUDANÇA: Usar o ZapiClient para enviar a resposta >>>
             try:
                 logger.debug("ZAPI_WEBHOOK: Tentando instanciar ZapiClient...")
-                zapi_client = ZapiClient() # Instancia o cliente
+                zapi_client = ZapiClient() 
                 logger.debug("ZAPI_WEBHOOK: ZapiClient instanciado. Enviando mensagem...")
                 
-                # Passar o message_id original do payload recebido para o parâmetro original_received_message_id
-                # Este é o ID da mensagem do usuário que estamos respondendo (para fins de logging/referência).
                 response_status = await zapi_client.send_text_message(
                     to_phone=session_id, 
                     message_text=agent_response_text,
                     original_received_message_id=payload.message_id 
                 )
                 logger.info(f"ZAPI_WEBHOOK: Status do envio da resposta via Z-API: {response_status}")
-                # Você pode querer verificar o 'response_status' para ver se houve erro no envio pela Z-API
                 if isinstance(response_status, dict) and response_status.get("error"):
                     logger.error(f"ZAPI_WEBHOOK: Falha ao enviar mensagem via Z-API. Detalhes: {response_status.get('details')}")
 
-            except ValueError as e: # Captura o erro se as credenciais ZAPI não estiverem configuradas
+            except ValueError as e:
                 logger.error(f"ZAPI_WEBHOOK: Falha ao inicializar ZapiClient (credenciais ZAPI ausentes?): {e}")
             except Exception as e: 
                 logger.error(f"ZAPI_WEBHOOK: Erro inesperado ao tentar enviar resposta via ZapiClient: {e}", exc_info=True)
@@ -89,7 +84,6 @@ async def process_incoming_zapi_message(
         logger.error(f"ZAPI_WEBHOOK: Erro inesperado no processamento da mensagem Z-API: {e}", exc_info=True)
 
 
-# Endpoint principal para receber webhooks da Z-API
 @router.post("/zapi", summary="Webhook para receber mensagens da Z-API")
 async def zapi_on_message_received_webhook(
     request: Request, 

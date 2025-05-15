@@ -9,27 +9,25 @@ class MainWorkflowState(TypedDict, total=False):
     current_operation: Optional[str]
     response_to_user: Optional[str] = None
 
-    # --- Campos para o fluxo de Agendamento ---
     scheduling_step: Optional[str] = None
     user_full_name: Optional[str] = None
     user_chosen_specialty: Optional[str] = None
     user_chosen_specialty_id: Optional[int]
 
-    # --- NOVOS CAMPOS PARA PREFERÊNCIA DE PROFISSIONAL ---
     professional_preference_type: Optional[str] = None 
-    user_provided_professional_name: Optional[str] = None # Nome que o usuário digitou
+    user_provided_professional_name: Optional[str] = None 
 
-    user_chosen_professional_id: Optional[int] # ID do profissional da API, após validação/escolha
-    user_chosen_professional_name: Optional[str] # Nome oficial do profissional da API, após validação/escolha
+    user_chosen_professional_id: Optional[int] 
+    user_chosen_professional_name: Optional[str]
 
     available_professionals_list: Optional[List[Dict]] 
 
-    user_chosen_turn: Optional[str] # NOVO: "MANHA" ou "TARDE"
-    available_dates_presented: Optional[List[str]] # Lista de datas (formato "AAAA-MM-DD") apresentadas
-    user_chosen_date: Optional[str] # Data escolhida (formato "AAAA-MM-DD")
-    available_times_presented: Optional[List[Dict[str, str]]] # Lista de horários (formato "HH:MM") apresentados
-    user_chosen_time: Optional[str] # Horário escolhido (formato "HH:MM")
-    user_chosen_time_fim: Optional[str] # Horário escolhido (formato "HH:MM")
+    user_chosen_turn: Optional[str] 
+    available_dates_presented: Optional[List[str]] 
+    user_chosen_date: Optional[str] 
+    available_times_presented: Optional[List[Dict[str, str]]] 
+    user_chosen_time: Optional[str] 
+    user_chosen_time_fim: Optional[str] 
 
     scheduling_completed: bool
     scheduling_values_confirmed: Optional[Dict]

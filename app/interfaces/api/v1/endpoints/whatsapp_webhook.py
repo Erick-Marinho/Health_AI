@@ -37,8 +37,7 @@ async def process_incoming_whatsapp_message(
                 async with db_pool.connection() as conn:
                     if conn is None:
                         logger.error(f"ERRO CRÍTICO: Falha ao obter conexão do db_pool para session_id: {session_id}.")
-                        # Adicione tratamento de erro mais robusto se necessário (ex: notificar admin)
-                        return # Interrompe o processamento para esta mensagem
+                        return
 
                     logger.debug(f"Conexão obtida do pool para session_id: {session_id}")
                     
@@ -84,15 +83,12 @@ async def whatsapp_main_webhook(
     logger.info("Recebido payload POST do WhatsApp no endpoint principal.")
     logger.info(f"RAW WhatsApp Payload Recebido: {payload_dict}")
     try:
-        # Validar o payload com Pydantic
         payload = WhatsAppWebhookPayload.model_validate(payload_dict)
         
-        # Adicionar a tarefa de processamento ao background
-        # Obter db_pool do estado da aplicação
+        
         db_pool_from_state = request.app.state.db_pool
         if not db_pool_from_state:
             logger.error("CRITICAL: db_pool não encontrado em request.app.state. Não é possível processar a mensagem.")
-            # Retornar um erro 500, pois a aplicação não está configurada corretamente
             raise HTTPException(status_code=500, detail="Configuração interna do servidor incorreta (DB Pool).")
 
         background_tasks.add_task(process_incoming_whatsapp_message, payload, db_pool_from_state)
