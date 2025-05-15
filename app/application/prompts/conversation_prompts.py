@@ -187,3 +187,107 @@ MATCH_SPECIFIC_PROFESSIONAL_NAME_PROMPT_TEMPLATE = ChatPromptTemplate.from_messa
     Baseado na lista, qual é o nome oficial correspondente ao nome fornecido pelo usuário? (Retorne apenas o nome oficial da lista ou "NENHUMA_CORRESPONDENCIA")
     Nome correspondente oficial:""")
 ])
+
+VALIDATE_CHOSEN_DATE_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
+    """
+    Você é um assistente de agendamento inteligente.
+    O usuário recebeu a seguinte lista de opções de datas disponíveis (no formato Dia/Mês/Ano):
+    {date_options_display_list_str}
+
+    A resposta do usuário à pergunta "Por favor, escolha uma das datas digitando o número da opção ou a data completa" foi:
+    "{user_response}"
+
+    As datas originais correspondentes a essas opções (no formato AAAA-MM-DD) são:
+    {date_options_internal_list_str}
+
+    Sua tarefa é determinar qual data no formato AAAA-MM-DD da lista '{date_options_internal_list_str}' o usuário escolheu.
+    Considere que o usuário pode ter respondido com:
+    - O número da opção (ex: "1", "primeira opção").
+    - O dia do mês (ex: "dia 5", "05", "cinco").
+    - A data completa (ex: "05/05/2025").
+
+    Se a resposta do usuário corresponder claramente a uma das datas na lista '{date_options_internal_list_str}', retorne APENAS essa data no formato AAAA-MM-DD.
+    Se a resposta for ambígua (ex: o usuário diz "dia 15" mas não há dia 15 na lista, ou há múltiplos dias 15 que poderiam ser) ou não corresponder a nenhuma opção, retorne a string "NENHUMA_CORRESPONDENCIA_OU_AMBIGUA".
+
+    Exemplos, supondo que date_options_display_list_str é "1. 02/05/2025\n2. 05/05/2025\n3. 09/05/2025" e
+    date_options_internal_list_str é "2025-05-02, 2025-05-05, 2025-05-09":
+    - user_response: "1" -> 2025-05-02
+    - user_response: "dia cinco" -> 2025-05-05
+    - user_response: "09" -> 2025-05-09
+    - user_response: "quero a terceira" -> 2025-05-09
+    - user_response: "05/05/2025" -> 2025-05-05
+    - user_response: "dia 10" -> NENHUMA_CORRESPONDENCIA_OU_AMBIGUA
+    - user_response: "ok" -> NENHUMA_CORRESPONDENCIA_OU_AMBIGUA
+
+    Data escolhida (AAAA-MM-DD) ou NENHUMA_CORRESPONDENCIA_OU_AMBIGUA:
+    """
+)
+
+PRESENT_AVAILABLE_TIMES_PROMPT_TEMPLATE = ChatPromptTemplate.from_messages([
+    ("system", """Você é um assistente de agendamento.
+    Sua tarefa é apresentar os horários disponíveis para o usuário de forma clara e solicitar que ele escolha um.
+    Os horários disponíveis são:
+    {available_times_list_str}
+
+    Responda APENAS com a pergunta formatada.
+    """),
+        ("human", "Por favor, me mostre os horários."), # Entrada de gatilho, pode ser genérica
+        ("ai", """Perfeito, {user_name}! Para o dia {chosen_date} com {professional_name} no período da {chosen_turn}, temos os seguintes horários disponíveis:
+    {available_times_list_str}
+
+    Por favor, digite o número correspondente ao horário que você deseja.
+    Ou, se preferir, pode dizer "nenhum desses" ou "voltar".
+""")
+])
+
+VALIDATE_CHOSEN_TIME_PROMPT_TEMPLATE = ChatPromptTemplate.from_messages([
+    ("system", """Você é um assistente de agendamento inteligente.
+    O usuário recebeu a seguinte lista numerada de opções de horários disponíveis (no formato HH:MM):
+    {time_options_display_list_str}
+
+    A resposta do usuário à pergunta "Por favor, digite o número correspondente ao horário que você deseja" foi:
+    "{user_response}"
+
+    As opções de horários originais (como strings "HH:MM") são:
+    {time_options_internal_list_str}
+
+    Sua tarefa é determinar qual horário no formato HH:MM da lista '{time_options_internal_list_str}' o usuário escolheu.
+    Considere que o usuário pode ter respondido com:
+    - O número da opção (ex: "1", "primeira opção").
+    - O horário exato (ex: "07:30", "7 e meia").
+    - Descrições parciais (ex: "o das sete e trinta", "o primeiro").
+
+    Se a resposta do usuário corresponder claramente a UM dos horários na lista '{time_options_internal_list_str}', retorne APENAS esse horário no formato HH:MM.
+    Se a resposta for ambígua (ex: o usuário diz "o das oito" e há "08:00" e "08:30" na lista) ou não corresponder a nenhuma opção, retorne a string "NENHUMA_CORRESPONDENCIA_OU_AMBIGUA".
+
+    Exemplos, supondo que time_options_display_list_str é "1. 07:30\n2. 08:00\n3. 08:30" e
+    time_options_internal_list_str é "07:30, 08:00, 08:30":
+    - user_response: "1" -> 07:30
+    - user_response: "o segundo" -> 08:00
+    - user_response: "quero as 8 e 30" -> 08:30
+    - user_response: "7:30" -> 07:30
+    - user_response: "pode ser o primeiro" -> 07:30
+    - user_response: "09:00" (não está na lista) -> NENHUMA_CORRESPONDENCIA_OU_AMBIGUA
+    - user_response: "ok" -> NENHUMA_CORRESPONDENCIA_OU_AMBIGUA
+
+    Horário escolhido (HH:MM) ou NENHUMA_CORRESPONDENCIA_OU_AMBIGUA:
+    """),
+    ("human", "{user_response}") # Apenas para completar a estrutura, o system prompt já tem o user_response
+])
+
+FINAL_SCHEDULING_CONFIRMATION_PROMPT_TEMPLATE = ChatPromptTemplate.from_messages([
+    ("system", """Você é um assistente de agendamento.
+    Sua tarefa é apresentar um resumo claro e conciso do agendamento para confirmação final do usuário.
+    Detalhes do agendamento:
+    - Nome do Paciente: {user_name}
+    - Especialidade: {chosen_specialty}
+    - Profissional: {chosen_professional_name}
+    - Data: {chosen_date_display}
+    - Horário: {chosen_time}
+
+    Responda APENAS com a mensagem de confirmação, perguntando se o usuário confirma.
+    Se algum detalhe estiver faltando, mencione que precisa de mais informações antes de confirmar.
+    Exemplo: "Perfeito, {user_name}! Seu agendamento para {chosen_specialty} com {chosen_professional_name} está pré-agendado para o dia {chosen_date_display} às {chosen_time}. Posso confirmar?"
+    """),
+    ("human", "Confirmar agendamento") # Trigger genérico
+])
