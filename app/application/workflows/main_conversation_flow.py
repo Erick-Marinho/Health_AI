@@ -799,7 +799,6 @@ def list_available_professionals_node(state: MainWorkflowState, llm_client: Chat
         {list_of_professional_names_str}
         Construa uma mensagem para o usuário apresentando essa lista.
         Peça para ele escolher um profissional digitando o número da opção ou o nome completo.
-        Se houver mais profissionais do que os listados (total_found > shown_count), mencione isso brevemente.
         Sua resposta:
         """
         present_professionals_prompt = ChatPromptTemplate.from_template(present_professionals_prompt_str)
@@ -807,16 +806,16 @@ def list_available_professionals_node(state: MainWorkflowState, llm_client: Chat
         total_found = len(simplified_professionals_list)
         shown_count = len(professionals_to_show)
         
-        additional_info = ""
-        if total_found > shown_count:
-            additional_info = f" (e mais {total_found - shown_count} outros)"
+        # additional_info = ""
+        # if total_found > shown_count:
+        #     additional_info = f" (e mais {total_found - shown_count} outros)"
 
 
         presentation_message = llm_client.invoke(
             present_professionals_prompt.format_messages(
                 user_name=user_full_name,
                 specialty_name=specialty_name,
-                list_of_professional_names_str=names_list_for_prompt.strip() + additional_info
+                list_of_professional_names_str=names_list_for_prompt.strip()
             )
         ).content.strip()
 
@@ -1280,6 +1279,87 @@ def coletar_validar_horario_escolhido_node(state: MainWorkflowState, llm_client:
             # Mantém available_times_presented para a próxima tentativa
         }
 
+def process_retry_option_choice_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> dict:
+        """
+        Processa a escolha do usuário após ser informado sobre a indisponibilidade
+        e perguntado se deseja tentar outro profissional, especialidade, ou verificar mais tarde.
+        """
+        logger.debug("--- Nó Agendamento: process_retry_option_choice_node ---")
+        user_message_content = get_last_user_message_content(state["messages"])
+        user_full_name = state.get("user_full_name", "Cliente")
+        updates = {}
+    
+        if not user_message_content:
+            logger.warning("Nenhuma resposta do usuário para processar a opção de nova tentativa.")
+            # Repetir a pergunta original sobre tentar novamente (poderia ser um prompt mais específico)
+            # Esta parte precisaria de um prompt para gerar a pergunta novamente.
+            # Por simplicidade, vamos apenas manter o estado e esperar uma nova mensagem.
+            # Ou, melhor, pedir para o usuário ser claro.
+            updates["response_to_user"] = "Não entendi sua resposta. Gostaria de tentar com outro profissional, outra especialidade, ou verificar mais tarde?"
+            updates["scheduling_step"] = "AWAITING_RETRY_OPTION_AFTER_NO_AVAILABILITY" # Mantém o passo
+            updates["messages"] = AIMessage(content=updates["response_to_user"])
+            return updates
+    
+        # Usar LLM para classificar a intenção do usuário (outro profissional, outra especialidade, cancelar/mais tarde)
+        # Poderíamos criar um prompt específico para isso. Exemplo simplificado:
+        normalized_response = user_message_content.lower()
+        
+        # Keyword-based simples por agora, idealmente um LLM com prompt dedicado para classificar
+        if "outro profissional" in normalized_response or "outro médico" in normalized_response or "outro dr" in normalized_response:
+            logger.info(f"Usuário '{user_full_name}' optou por tentar outro profissional na mesma especialidade.")
+            updates["user_chosen_professional_id"] = None
+            updates["user_chosen_professional_name"] = None
+            updates["user_provided_professional_name"] = None # Limpa nome fornecido anteriormente
+            updates["professional_preference_type"] = None # Força perguntar novamente a preferência
+            updates["user_chosen_turn"] = None # Resetar turno, pois pode ser diferente para outro profissional
+            updates["available_dates_presented"] = None
+            updates["user_chosen_date"] = None
+            updates["available_times_presented"] = None
+            # Direciona para o nó que pergunta sobre a preferência de profissional
+            updates["scheduling_step"] = "REQUESTING_PROFESSIONAL_PREFERENCE"
+            updates["response_to_user"] = None # O nó de destino fará a pergunta
+    
+        elif "outra especialidade" in normalized_response or "mudar especialidade" in normalized_response:
+            logger.info(f"Usuário '{user_full_name}' optou por tentar outra especialidade.")
+            updates["user_chosen_specialty"] = None
+            updates["user_chosen_specialty_id"] = None
+            updates["user_chosen_professional_id"] = None
+            updates["user_chosen_professional_name"] = None
+            updates["user_provided_professional_name"] = None
+            updates["professional_preference_type"] = None
+            updates["user_chosen_turn"] = None
+            updates["available_dates_presented"] = None
+            updates["user_chosen_date"] = None
+            updates["available_times_presented"] = None
+            # Direciona para o nó que coleta e valida a nova especialidade
+            updates["scheduling_step"] = "VALIDATING_SPECIALTY" 
+            updates["response_to_user"] = None # O nó de destino fará a pergunta (Qual especialidade?)
+    
+        elif "não" in normalized_response or "cancelar" in normalized_response or "mais tarde" in normalized_response or "nenhum" in normalized_response:
+            logger.info(f"Usuário '{user_full_name}' optou por não prosseguir ou verificar mais tarde.")
+            updates["response_to_user"] = f"Entendido, {user_full_name}. Se mudar de ideia ou precisar de algo mais, é só chamar!"
+            updates["scheduling_step"] = None # Limpa o passo de agendamento
+            updates["current_operation"] = None # Finaliza a operação de agendamento
+            updates["messages"] = AIMessage(content=updates["response_to_user"])
+        else:
+            logger.warning(f"Resposta não clara do usuário ('{user_message_content}') para opção de nova tentativa.")
+            # Poderia usar LLM para gerar uma mensagem de reprompt mais inteligente
+            updates["response_to_user"] = (
+                f"Desculpe, {user_full_name}, não entendi bem. Se não há datas para este profissional, "
+                "você gostaria de tentar com 'outro profissional' (na mesma especialidade), "
+                "tentar 'outra especialidade', ou 'cancelar' o agendamento por ora?"
+            )
+            updates["scheduling_step"] = "AWAITING_RETRY_OPTION_AFTER_NO_AVAILABILITY" # Mantém para o usuário tentar de novo
+            updates["messages"] = AIMessage(content=updates["response_to_user"])
+            
+        # Garante que 'messages' seja atualizado se uma resposta for gerada aqui.
+        # No LangGraph, o retorno do nó atualiza o estado. Se response_to_user é setado,
+        # o sistema principal deve adicionar a AIMessage correspondente.
+        # O exemplo acima já adiciona AIMessage quando response_to_user é setado neste nó.
+        # Se response_to_user for None, o próximo nó no fluxo gerará a mensagem.
+    
+        return updates
+
 # === consultas api ===
 
 def coletar_validar_turno_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> dict:
@@ -1485,7 +1565,7 @@ def fetch_and_present_available_dates_node(state: MainWorkflowState, llm_client:
         no_dates_response = llm_client.invoke(no_dates_prompt.format_messages(user_name=user_full_name, professional_name=nome_profissional)).content.strip()
         return {
             "response_to_user": no_dates_response,
-            "scheduling_step": "REQUESTING_PROFESSIONAL_PREFERENCE", # Volta para escolher profissional/especialidade
+            "scheduling_step": "AWAITING_RETRY_OPTION_AFTER_NO_AVAILABILITY", # Volta para escolher profissional/especialidade
             "current_operation": "SCHEDULING",
             "available_dates_presented": []
         }
@@ -1739,8 +1819,10 @@ def route_scheduling_step(state: MainWorkflowState) -> str:
         return "coletar_validar_nome_agendamento_node"
     elif step == "VALIDATING_SPECIALTY": 
         return "coletar_validar_especialidade_node"
-    elif step == "AWAITING_PROFESSIONAL_PREFERENCE":
+    elif step == "REQUESTING_PROFESSIONAL_PREFERENCE":
         return "solicitar_preferencia_profissional_node"
+    elif step == "FETCHING_AVAILABLE_DATES": 
+        return "fetch_and_present_available_dates_node"
     elif step == "CLASSIFYING_PROFESSIONAL_PREFERENCE": 
         return "coletar_classificar_preferencia_profissional_node"
     elif step == "PROCESSING_PROFESSIONAL_LOGIC": 
@@ -1763,6 +1845,8 @@ def route_scheduling_step(state: MainWorkflowState) -> str:
         return "coletar_validar_horario_escolhido_node"
     elif step == "AWAITING_FINAL_CONFIRMATION":
         return "process_final_scheduling_confirmation_node"
+    elif step == "AWAITING_RETRY_OPTION_AFTER_NO_AVAILABILITY":
+        return "process_retry_option_choice_node"
     
     logger.warning(f"Roteamento do Agendamento: Passo desconhecido ou não manuseado '{step}'. Finalizando o fluxo de agendamento.")
     return END
@@ -1822,6 +1906,7 @@ def get_main_conversation_graph_definition() -> StateGraph:
     workflow_builder.add_node("fetch_and_present_available_dates_node", partial(fetch_and_present_available_dates_node, llm_client=llm_instance))
     workflow_builder.add_node("collect_validate_chosen_date_node", partial(collect_validate_chosen_date_node, llm_client=llm_instance))
     workflow_builder.add_node("fetch_and_present_available_times_node", partial(fetch_and_present_available_times_node, llm_client=llm_instance))
+    workflow_builder.add_node("process_retry_option_choice_node", partial(process_retry_option_choice_node, llm_client=llm_instance))
     workflow_builder.add_node("coletar_validar_horario_escolhido_node", partial(coletar_validar_horario_escolhido_node, llm_client=llm_instance))
     workflow_builder.add_node("process_final_scheduling_confirmation_node", partial(process_final_scheduling_confirmation_node, llm_client=llm_instance))
 
@@ -1865,6 +1950,7 @@ def get_main_conversation_graph_definition() -> StateGraph:
             "solicitar_turno_node": "solicitar_turno_node",
             "coletar_validar_turno_node": "coletar_validar_turno_node",
             "fetch_and_present_available_dates_node": "fetch_and_present_available_dates_node",
+            "process_retry_option_choice_node": "process_retry_option_choice_node",
             "collect_validate_chosen_date_node": "collect_validate_chosen_date_node",
             "fetch_and_present_available_times_node": "fetch_and_present_available_times_node",
             "coletar_validar_horario_escolhido_node": "coletar_validar_horario_escolhido_node",
@@ -1879,6 +1965,15 @@ def get_main_conversation_graph_definition() -> StateGraph:
         {
             END: END,  # Se response_to_user foi setado por processing_professional_logic_node
             "route_scheduling_step": "route_scheduling_step" # Se for para continuar internamente (ex: para listar profissionais)
+        }
+    )
+
+    workflow_builder.add_conditional_edges(
+        "process_retry_option_choice_node",
+        lambda state: "route_scheduling_step" if state.get("scheduling_step") and state.get("current_operation") == "SCHEDULING" else END,
+        {
+            "route_scheduling_step": "route_scheduling_step",
+            END: END
         }
     )
 
