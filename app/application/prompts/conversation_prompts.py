@@ -314,3 +314,23 @@ VALIDATE_FINAL_CONFIRMATION_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
     Categoria:
     """
 )
+
+EXTRACT_FULL_NAME_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
+    """
+    Dada a seguinte mensagem do usuário, que deveria conter o nome completo para um agendamento, extraia APENAS o nome completo da pessoa.
+    Se a mensagem contiver frases introdutórias como "meu nome é", "sou o", "chamo-me", etc., remova-as e retorne apenas o nome.
+    Se a mensagem for apenas o nome, retorne o nome.
+    Se a mensagem não parecer ser um nome de pessoa (ex: "não sei", "quero marcar uma consulta", uma pergunta), retorne a string literal "NOME_NAO_IDENTIFICADO".
+
+    Exemplos:
+    - Usuário: "meu nome é Erick Marinho" -> Erick Marinho
+    - Usuário: "Sou Ana Carolina Silva" -> Ana Carolina Silva
+    - Usuário: "João Pedro Oliveira" -> João Pedro Oliveira
+    - Usuário: "Pode me chamar de Dra. Beatriz Souza" -> Dra. Beatriz Souza 
+    - Usuário: "qual o seu nome?" -> NOME_NAO_IDENTIFICADO
+    - Usuário: "sim" -> NOME_NAO_IDENTIFICADO
+
+    Mensagem do usuário: "{user_message}"
+    Nome Completo Extraído:
+    """
+)

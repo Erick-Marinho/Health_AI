@@ -27,8 +27,9 @@ class MainWorkflowState(TypedDict, total=False):
     user_chosen_turn: Optional[str] # NOVO: "MANHA" ou "TARDE"
     available_dates_presented: Optional[List[str]] # Lista de datas (formato "AAAA-MM-DD") apresentadas
     user_chosen_date: Optional[str] # Data escolhida (formato "AAAA-MM-DD")
-    available_times_presented: Optional[List[str]] # Lista de horários (formato "HH:MM") apresentados
+    available_times_presented: Optional[List[Dict[str, str]]] # Lista de horários (formato "HH:MM") apresentados
     user_chosen_time: Optional[str] # Horário escolhido (formato "HH:MM")
+    user_chosen_time_fim: Optional[str] # Horário escolhido (formato "HH:MM")
 
     scheduling_completed: bool
     scheduling_values_confirmed: Optional[Dict]

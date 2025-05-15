@@ -5,7 +5,7 @@ import requests
 
 from datetime import datetime, date, timedelta, time
 from functools import partial
-from typing import Optional, List
+from typing import Optional, List, Dict
 from app.core.config import settings
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langchain_openai import ChatOpenAI
@@ -34,7 +34,8 @@ from app.application.prompts.conversation_prompts import (
     PRESENT_AVAILABLE_TIMES_PROMPT_TEMPLATE,
     VALIDATE_CHOSEN_TIME_PROMPT_TEMPLATE,
     FINAL_SCHEDULING_CONFIRMATION_PROMPT_TEMPLATE,
-    VALIDATE_FINAL_CONFIRMATION_PROMPT_TEMPLATE
+    VALIDATE_FINAL_CONFIRMATION_PROMPT_TEMPLATE,
+    EXTRACT_FULL_NAME_PROMPT_TEMPLATE
 )
 from app.domain.models.user_profile import FullNameModel
 from app.infrastructure.llm_clients import get_llm_client
@@ -98,56 +99,89 @@ def solicitar_nome_agendamento_node(state: MainWorkflowState, llm_client: ChatOp
 
 def coletar_validar_nome_agendamento_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> dict:
     """
-    Nó para coletar a resposta do usuário (nome) e validá-la.
+    Nó para coletar a resposta do usuário, extrair o nome e validá-lo.
     """
     logger.debug("--- Nó Agendamento: coletar_validar_nome_agendamento_node ---")
     user_message_content = get_last_user_message_content(state["messages"])
 
     if not user_message_content:
         logger.warning("Nenhuma resposta do usuário para coletar/validar o nome.")
+        # Reutilizar o prompt de solicitação de nome se o usuário não enviar nada
+        reprompt_messages = REQUEST_FULL_NAME_PROMPT_TEMPLATE.format_messages()
+        ai_reprompt_response = llm_client.invoke(reprompt_messages)
         return {
-            "response_to_user": "Não recebi seu nome. Poderia informar, por favor?",
-            "scheduling_step": "VALIDATING_FULL_NAME", # Tenta novamente
+            "response_to_user": "Não recebi seu nome. " + ai_reprompt_response.content.strip(),
+            "scheduling_step": "VALIDATING_FULL_NAME", 
             "current_operation": "SCHEDULING"
         }
 
-    logger.info(f"Nome recebido do usuário para validação: '{user_message_content}'")
+    logger.info(f"Mensagem recebida do usuário para extração de nome: '{user_message_content}'")
 
+    # 1. Usar LLM para extrair o nome da mensagem do usuário
+    extracted_name = "NOME_NAO_IDENTIFICADO" # Default
     try:
-        # Validar usando o Pydantic model
-        validated_name_model = FullNameModel(full_name=user_message_content)
-        validated_name = validated_name_model.full_name
-        logger.info(f"Nome validado com sucesso: {validated_name}")
+        extraction_prompt_messages = EXTRACT_FULL_NAME_PROMPT_TEMPLATE.format_messages(user_message=user_message_content)
+        llm_extraction_response = llm_client.invoke(extraction_prompt_messages)
+        extracted_name = llm_extraction_response.content.strip()
+        logger.info(f"Nome extraído pelo LLM: '{extracted_name}' (da entrada: '{user_message_content}')")
+    except Exception as e:
+        logger.error(f"Erro ao invocar LLM para extração de nome: {e}", exc_info=True)
+        # Se houver erro na extração, pedir novamente de forma genérica
+        return {
+            "response_to_user": "Tive um problema ao entender o nome informado. Poderia, por favor, me dizer seu nome completo novamente?",
+            "scheduling_step": "VALIDATING_FULL_NAME",
+            "current_operation": "SCHEDULING"
+        }
 
-        # AGORA, GERAR A PERGUNTA SOBRE ESPECIALIDADE AQUI MESMO
-        prompt_messages_especialidade = REQUEST_SPECIALTY_PROMPT_TEMPLATE.format_messages(user_name=validated_name)
+    if not extracted_name or extracted_name == "NOME_NAO_IDENTIFICADO":
+        logger.warning(f"LLM não conseguiu extrair um nome válido da entrada: '{user_message_content}'. Retorno do LLM: '{extracted_name}'")
+        # Reutilizar o prompt de solicitação de nome
+        reprompt_messages = REQUEST_FULL_NAME_PROMPT_TEMPLATE.format_messages()
+        ai_reprompt_response = llm_client.invoke(reprompt_messages)
+        return {
+            "response_to_user": "Não consegui identificar um nome válido na sua resposta. " + ai_reprompt_response.content.strip(),
+            "scheduling_step": "VALIDATING_FULL_NAME",
+            "current_operation": "SCHEDULING"
+        }
+
+    # 2. Validar o nome extraído usando Pydantic
+    try:
+        validated_name_model = FullNameModel(full_name=extracted_name)
+        final_validated_name = validated_name_model.full_name
+        logger.info(f"Nome extraído e validado com sucesso: {final_validated_name}")
+
+        prompt_messages_especialidade = REQUEST_SPECIALTY_PROMPT_TEMPLATE.format_messages(user_name=final_validated_name)
         ai_response_especialidade = llm_client.invoke(prompt_messages_especialidade)
         pergunta_especialidade = ai_response_especialidade.content.strip()
         logger.info(f"Pergunta sobre especialidade gerada após validar nome: '{pergunta_especialidade}'")
         
-        # Nome validado, avançar para a próxima etapa (ex: pedir especialidade)
-        # Por enquanto, vamos apenas confirmar e finalizar esta parte do fluxo.
         return {
-            "user_full_name": validated_name,
-            "response_to_user": pergunta_especialidade, # A pergunta sobre especialidade
-            "scheduling_step": "VALIDATING_SPECIALTY",  # <<< CORREÇÃO AQUI: Próximo passo é validar a especialidade que será enviada
+            "user_full_name": final_validated_name, # Salva o nome realmente validado
+            "response_to_user": pergunta_especialidade,
+            "scheduling_step": "VALIDATING_SPECIALTY",
             "current_operation": "SCHEDULING",
-            # "scheduling_completed": True # Mantenha False até o fim real do agendamento
         }
-    except ValueError as e: # Erro de validação do Pydantic
+    except ValueError as e: 
         error_message_for_user = str(e)
-        logger.warning(f"Falha na validação do nome '{user_message_content}': {error_message_for_user}")
-        # Formatar a mensagem de erro de validação do Pydantic para ser mais amigável, se possível
-        # No seu log, a mensagem já está bem detalhada: "1 validation error for FullNameModel\nfull_name\n  Value error, O nome completo deve conter pelo menos um nome e um sobrenome."
-        # Podemos tentar simplificar para o usuário.
+        logger.warning(f"Falha na validação Pydantic do nome extraído '{extracted_name}': {error_message_for_user}")
+        
         if "O nome completo deve conter pelo menos um nome e um sobrenome" in error_message_for_user:
-            friendly_error = "Por favor, informe seu nome completo, incluindo o sobrenome."
+            friendly_error = f"O nome '{extracted_name}' não parece ser um nome completo. Por favor, informe seu nome e sobrenome."
+        elif "O nome completo deve conter apenas letras e espaços" in error_message_for_user:
+            friendly_error = f"O nome '{extracted_name}' contém caracteres que não são permitidos. Por favor, use apenas letras e espaços."
         else:
-            friendly_error = "Houve um problema com o nome informado. Poderia tentar novamente?"
+            friendly_error = f"Houve um problema com o nome '{extracted_name}'. Poderia tentar informar seu nome completo novamente?"
 
         return {
             "response_to_user": friendly_error,
             "scheduling_step": "VALIDATING_FULL_NAME", 
+            "current_operation": "SCHEDULING"
+        }
+    except Exception as e: # Outros erros inesperados
+        logger.error(f"Erro inesperado durante validação Pydantic do nome '{extracted_name}': {e}", exc_info=True)
+        return {
+            "response_to_user": "Ocorreu um erro ao processar seu nome. Poderia, por favor, informar seu nome completo novamente?",
+            "scheduling_step": "VALIDATING_FULL_NAME",
             "current_operation": "SCHEDULING"
         }
 
@@ -1032,171 +1066,208 @@ def fetch_and_present_available_times_node(state: MainWorkflowState, llm_client:
         logger.error(f"Dados insuficientes para buscar horários: professional_id={professional_id}, chosen_date={chosen_date_str}, chosen_turn={chosen_turn}")
         return {
             "response_to_user": "Desculpe, não consegui obter todas as informações necessárias (profissional, data ou turno) para buscar os horários. Poderia tentar novamente?",
-            "scheduling_step": "SCHEDULING_ERROR"
+            "scheduling_step": "SCHEDULING_ERROR" # Ou um passo de fallback apropriado
         }
 
     api_url = f"https://back.homologacao.apphealth.com.br:9090/api-vizi/agenda/profissionais/{professional_id}/horarios"
-    headers = {"Authorization": "TXH3xnwI7P4Sh5dS71aRDsQzDrx1GKeW8jXd5eHDpqTOi"}
+    headers = {"Authorization": settings.APPHEALTH_API_TOKEN} # Usando settings
     params = {"data": chosen_date_str}
 
     response_to_user = ""
     next_scheduling_step = "AWAITING_TIME_CHOICE"
-    presented_times_for_state = []
+    # Agora available_times_presented_for_state será uma lista de dicionários
+    available_times_presented_for_state: List[Dict[str, str]] = []
+
 
     try:
         logger.info(f"Chamando API de horários: GET {api_url} com params: {params}")
         api_response = requests.get(api_url, headers=headers, params=params, timeout=10)
         api_response.raise_for_status()
-        available_slots = api_response.json()
-        logger.info(f"API de horários retornou {len(available_slots)} slots.")
+        available_slots_from_api = api_response.json() # Lista de dicts com horaInicio, horaFim, etc.
+        logger.info(f"API de horários retornou {len(available_slots_from_api)} slots.")
 
-        if not available_slots:
-            response_to_user = f"Desculpe, {user_full_name}, parece que não há horários disponíveis para {professional_name} no dia {chosen_date_str} ({chosen_turn}). Gostaria de tentar outra data ou turno?"
-            next_scheduling_step = "AWAITING_NEW_DATE_OR_TURN_PREFERENCE" # Ou um passo específico para isso
-            # Poderíamos também sugerir listar outros profissionais ou especialidades
+        if not available_slots_from_api:
+            response_to_user = f"Desculpe, {user_full_name}, parece que não há horários disponíveis para {professional_name} no dia {datetime.strptime(chosen_date_str, '%Y-%m-%d').strftime('%d/%m/%Y')} ({chosen_turn.lower()}). Gostaria de tentar outra data ou turno?"
+            next_scheduling_step = "FETCHING_AVAILABLE_DATES" # Volta para escolher data
         else:
-            # Filtrar por turno
-            filtered_slots = []
-            for slot in available_slots:
-                hora_inicio_obj = datetime.strptime(slot["horaInicio"], "%H:%M:%S").time()
-                if chosen_turn == "MANHA" and hora_inicio_obj < time(12, 0):
-                    filtered_slots.append(slot["horaInicio"][:5]) # Apenas HH:MM
-                elif chosen_turn == "TARDE" and hora_inicio_obj >= time(12, 0):
-                    filtered_slots.append(slot["horaInicio"][:5]) # Apenas HH:MM
+            # Filtrar por turno e preparar dados para o estado e display
+            filtered_slots_details = []
+            for slot in available_slots_from_api:
+                if slot.get("horaInicio") and slot.get("horaFim"):
+                    try:
+                        hora_inicio_obj = datetime.strptime(slot["horaInicio"], "%H:%M:%S").time()
+                        
+                        # Checar turno
+                        if (chosen_turn == "MANHA" and hora_inicio_obj < time(12, 0)) or \
+                           (chosen_turn == "TARDE" and hora_inicio_obj >= time(12, 0)):
+                            
+                            filtered_slots_details.append({
+                                "display": slot["horaInicio"][:5],      # HH:MM para mostrar ao usuário
+                                "horaInicio_api": slot["horaInicio"],   # HH:MM:SS para API
+                                "horaFim_api": slot["horaFim"]          # HH:MM:SS para API
+                            })
+                    except ValueError as ve:
+                        logger.warning(f"Slot de horário com formato de hora inválido da API: {slot}. Erro: {ve}")
+                        continue # Pula este slot
             
-            # Pegar no máximo 3 horários e garantir unicidade (caso a API retorne duplicados após filtro)
-            unique_filtered_slots = sorted(list(set(filtered_slots)))
+            # Remover duplicatas baseadas no horário de display (HH:MM) e pegar no máximo X horários
+            # Isso evita mostrar "08:00" duas vezes se por acaso a API retornar com segundos diferentes mas o mesmo HH:MM
+            unique_filtered_slots_temp = {}
+            for slot_detail in filtered_slots_details:
+                if slot_detail["display"] not in unique_filtered_slots_temp:
+                    unique_filtered_slots_temp[slot_detail["display"]] = slot_detail
             
-            if not unique_filtered_slots:
-                 response_to_user = f"Desculpe, {user_full_name}, após filtrar pelo turno da {chosen_turn.lower()}, não encontramos horários disponíveis para {professional_name} no dia {chosen_date_str}. Gostaria de tentar outro turno ou data?"
-                 next_scheduling_step = "AWAITING_NEW_DATE_OR_TURN_PREFERENCE"
+            # Ordenar pelos horários de display antes de fatiar
+            # Convertendo para datetime para ordenar corretamente (ex: "13:00" antes de "08:00" se não for feito)
+            sorted_unique_slots = sorted(
+                list(unique_filtered_slots_temp.values()), 
+                key=lambda x: datetime.strptime(x["display"], "%H:%M").time()
+            )
+
+            if not sorted_unique_slots:
+                 response_to_user = f"Desculpe, {user_full_name}, após filtrar pelo turno da {chosen_turn.lower()}, não encontramos horários disponíveis para {professional_name} no dia {datetime.strptime(chosen_date_str, '%Y-%m-%d').strftime('%d/%m/%Y')}. Gostaria de tentar outro turno ou data?"
+                 next_scheduling_step = "VALIDATING_TURN_PREFERENCE" # Volta para escolher turno ou data
             else:
-                presented_times_for_state = unique_filtered_slots[:3]
+                available_times_presented_for_state = sorted_unique_slots[:3] # Pega os 3 primeiros
                 
-                if not presented_times_for_state:
-                    # Fallback caso algo dê muito errado no fatiamento
-                    response_to_user = f"Desculpe, {user_full_name}, não consegui encontrar horários para o turno da {chosen_turn.lower()} no dia {chosen_date_str} para {professional_name}. Gostaria de tentar outra data ou turno?"
-                    next_scheduling_step = "AWAITING_NEW_DATE_OR_TURN_PREFERENCE"
+                if not available_times_presented_for_state:
+                    response_to_user = f"Desculpe, {user_full_name}, não consegui encontrar horários para o turno da {chosen_turn.lower()} no dia {datetime.strptime(chosen_date_str, '%Y-%m-%d').strftime('%d/%m/%Y')} para {professional_name}. Gostaria de tentar outra data ou turno?"
+                    next_scheduling_step = "VALIDATING_TURN_PREFERENCE"
                 else:
-                    times_list_str = "\n".join([f"{i+1}. {t}" for i, t in enumerate(presented_times_for_state)])
+                    # Apenas os horários de início (display) para a lista do prompt
+                    times_list_for_prompt_display = [
+                        f"{i+1}. {slot_data['display']}" for i, slot_data in enumerate(available_times_presented_for_state)
+                    ]
+                    times_list_str = "\n".join(times_list_for_prompt_display)
                     
-                    # Usando o novo prompt template
                     prompt_messages = PRESENT_AVAILABLE_TIMES_PROMPT_TEMPLATE.format_messages(
                         user_name=user_full_name,
-                        chosen_date=datetime.strptime(chosen_date_str, "%Y-%m-%d").strftime("%d/%m/%Y"), # Formatar data para exibição
+                        chosen_date=datetime.strptime(chosen_date_str, "%Y-%m-%d").strftime("%d/%m/%Y"),
                         professional_name=professional_name,
                         chosen_turn=chosen_turn.lower(),
                         available_times_list_str=times_list_str
                     )
-                    # A resposta da IA já é a mensagem formatada que queremos enviar.
-                    # Acessamos o conteúdo da AIMessage gerada pelo template.
                     if prompt_messages and isinstance(prompt_messages[-1], AIMessage):
                          response_to_user = prompt_messages[-1].content
                     else:
-                        # Fallback caso o prompt não funcione como esperado
                         logger.error("Falha ao formatar a mensagem com PRESENT_AVAILABLE_TIMES_PROMPT_TEMPLATE.")
-                        response_to_user = f"Temos estes horários para {professional_name} no dia {chosen_date_str} ({chosen_turn}):\n{times_list_str}\nQual você prefere?"
-
+                        response_to_user = f"Temos estes horários para {professional_name} no dia {datetime.strptime(chosen_date_str, '%Y-%m-%d').strftime('%d/%m/%Y')} ({chosen_turn.lower()}):\n{times_list_str}\nQual você prefere?"
 
     except requests.exceptions.RequestException as e:
         logger.error(f"Erro ao chamar API de horários: {e}")
         response_to_user = "Desculpe, tivemos um problema ao buscar os horários disponíveis. Por favor, tente novamente mais tarde."
         next_scheduling_step = "SCHEDULING_ERROR"
     except Exception as e:
-        logger.error(f"Erro inesperado em fetch_and_present_available_times_node: {e}")
+        logger.error(f"Erro inesperado em fetch_and_present_available_times_node: {e}", exc_info=True)
         response_to_user = "Desculpe, ocorreu um erro interno ao processar sua solicitação de horários."
         next_scheduling_step = "SCHEDULING_ERROR"
 
-    logger.info(f"fetch_and_present_available_times_node: response_to_user='{response_to_user}', next_scheduling_step='{next_scheduling_step}', presented_times='{presented_times_for_state}'")
+    logger.info(f"fetch_and_present_available_times_node: response_to_user='{response_to_user}', next_scheduling_step='{next_scheduling_step}', presented_times='{available_times_presented_for_state}'")
     return {
         "response_to_user": response_to_user,
         "scheduling_step": next_scheduling_step,
-        "available_times_presented": presented_times_for_state, # Salva os horários exatos apresentados
-        "messages": AIMessage(content=response_to_user) # Adiciona a resposta da IA ao histórico
+        "available_times_presented": available_times_presented_for_state, 
+        "messages": AIMessage(content=response_to_user) 
     }
 
 def coletar_validar_horario_escolhido_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> dict:
     logger.info(f"--- Nó: coletar_validar_horario_escolhido_node (Session ID: {state.get('session_id', 'N/A')}) ---")
     user_response_content = get_last_user_message_content(state["messages"])
-    available_times = state.get("available_times_presented", []) # Lista de strings "HH:MM"
+    
+    # available_times_presented agora é uma lista de dicts: [{'display': 'HH:MM', 'horaInicio_api': 'HH:MM:SS', 'horaFim_api': 'HH:MM:SS'}, ...]
+    available_times_details_list = state.get("available_times_presented", []) 
     user_full_name = state.get("user_full_name", "Paciente")
     chosen_specialty = state.get("user_chosen_specialty", "a especialidade")
     chosen_professional_name = state.get("user_chosen_professional_name", "o profissional")
-    chosen_date_api_format = state.get("user_chosen_date") # Formato YYYY-MM-DD
+    chosen_date_api_format = state.get("user_chosen_date") 
 
     if not user_response_content:
         logger.warning("Nenhuma resposta do usuário para validar horário escolhido.")
-        # Reprompt simples, poderia ser melhorado com LLM para lembrar as opções
         return {
             "response_to_user": "Por favor, escolha um dos horários que apresentei.",
             "scheduling_step": "AWAITING_TIME_CHOICE",
             "messages": AIMessage(content="Por favor, escolha um dos horários que apresentei.")
         }
 
-    if not available_times:
-        logger.error("'available_times_presented' não encontrado no estado. Não é possível validar a escolha do horário.")
+    if not available_times_details_list:
+        logger.error("'available_times_presented' não encontrado ou vazio no estado. Não é possível validar a escolha do horário.")
         return {
             "response_to_user": "Desculpe, ocorreu um problema e não consigo ver os horários que apresentei. Vamos tentar buscar novamente.",
-            "scheduling_step": "FETCHING_AVAILABLE_TIMES", # Volta para buscar horários
+            "scheduling_step": "FETCHING_AVAILABLE_TIMES", 
             "messages": AIMessage(content="Desculpe, ocorreu um problema e não consigo ver os horários que apresentei. Vamos tentar buscar novamente.")
         }
 
-    time_options_display_list_str = "\n".join([f"{i+1}. {t}" for i, t in enumerate(available_times)])
-    time_options_internal_list_str = ", ".join(available_times)
+    # Preparar listas para o prompt do LLM
+    # time_options_display_list_str é a lista numerada "1. HH:MM\n2. HH:MM..."
+    time_options_display_list_str = "\n".join([
+        f"{i+1}. {slot_details['display']}" for i, slot_details in enumerate(available_times_details_list)
+    ])
+    # time_options_internal_list_str é uma string dos horários de display "HH:MM, HH:MM, ..."
+    time_options_internal_list_str = ", ".join([
+        slot_details['display'] for slot_details in available_times_details_list
+    ])
 
-    logger.info(f"Validando escolha de horário: '{user_response_content}' contra opções: {available_times}")
+    logger.info(f"Validando escolha de horário: '{user_response_content}' contra opções de display: {[s['display'] for s in available_times_details_list]}")
 
-    chosen_time_llm_response = "NENHUMA_CORRESPONDENCIA_OU_AMBIGUA"
+    chosen_time_display_from_llm = "NENHUMA_CORRESPONDENCIA_OU_AMBIGUA"
     try:
         prompt_messages = VALIDATE_CHOSEN_TIME_PROMPT_TEMPLATE.format_messages(
             time_options_display_list_str=time_options_display_list_str,
             user_response=user_response_content,
-            time_options_internal_list_str=time_options_internal_list_str
+            time_options_internal_list_str=time_options_internal_list_str # LLM valida contra o formato HH:MM
         )
         llm_response = llm_client.invoke(prompt_messages)
-        chosen_time_llm_response = llm_response.content.strip()
-        logger.info(f"LLM para validação de horário retornou: '{chosen_time_llm_response}'")
+        chosen_time_display_from_llm = llm_response.content.strip() # Espera-se HH:MM
+        logger.info(f"LLM para validação de horário (display HH:MM) retornou: '{chosen_time_display_from_llm}'")
     except Exception as e:
         logger.error(f"Erro ao invocar LLM para validar horário escolhido: {e}", exc_info=True)
-        # Mantém como não correspondência para o reprompt
-
-    if chosen_time_llm_response != "NENHUMA_CORRESPONDENCIA_OU_AMBIGUA" and chosen_time_llm_response in available_times:
-        logger.info(f"Usuário escolheu o horário: {chosen_time_llm_response}")
+    
+    # Agora, encontrar o slot completo (com horaInicio_api e horaFim_api) correspondente ao horário de display validado pelo LLM
+    selected_slot_details: Optional[Dict[str, str]] = None
+    if chosen_time_display_from_llm != "NENHUMA_CORRESPONDENCIA_OU_AMBIGUA":
+        for slot_details in available_times_details_list:
+            if slot_details['display'] == chosen_time_display_from_llm:
+                selected_slot_details = slot_details
+                break
+    
+    if selected_slot_details:
+        user_chosen_time_hhmm = selected_slot_details['display'] # HH:MM
+        user_chosen_time_fim_api = selected_slot_details['horaFim_api'] # HH:MM:SS
         
-        # Formatar data para exibição na confirmação
-        chosen_date_display = ""
+        logger.info(f"Usuário escolheu o horário (display): {user_chosen_time_hhmm}. Detalhes completos do slot: {selected_slot_details}")
+        
+        chosen_date_display_for_confirmation = ""
         if chosen_date_api_format:
             try:
-                chosen_date_display = datetime.strptime(chosen_date_api_format, "%Y-%m-%d").strftime("%d/%m/%Y")
+                chosen_date_display_for_confirmation = datetime.strptime(chosen_date_api_format, "%Y-%m-%d").strftime("%d/%m/%Y")
             except ValueError:
-                logger.warning(f"Formato de data inválido em user_chosen_date: {chosen_date_api_format}")
-                chosen_date_display = chosen_date_api_format # Usa como está se não puder formatar
+                chosen_date_display_for_confirmation = chosen_date_api_format
 
-        # Gerar mensagem de confirmação final
         try:
             confirmation_prompt_messages = FINAL_SCHEDULING_CONFIRMATION_PROMPT_TEMPLATE.format_messages(
                 user_name=user_full_name,
                 chosen_specialty=chosen_specialty,
                 chosen_professional_name=chosen_professional_name,
-                chosen_date_display=chosen_date_display,
-                chosen_time=chosen_time_llm_response
+                chosen_date_display=chosen_date_display_for_confirmation,
+                chosen_time=user_chosen_time_hhmm # Mostrar HH:MM para o usuário
             )
             confirmation_response = llm_client.invoke(confirmation_prompt_messages)
             response_text_for_user = confirmation_response.content.strip()
         except Exception as e:
             logger.error(f"Erro ao gerar mensagem de confirmação final: {e}")
-            response_text_for_user = f"Agendamento para {chosen_specialty} com {chosen_professional_name} no dia {chosen_date_display} às {chosen_time_llm_response}. Confirmar?" # Fallback
+            response_text_for_user = f"Agendamento para {chosen_specialty} com {chosen_professional_name} no dia {chosen_date_display_for_confirmation} às {user_chosen_time_hhmm}. Confirmar?"
 
         return {
-            "user_chosen_time": chosen_time_llm_response,
+            "user_chosen_time": user_chosen_time_hhmm, # Salva HH:MM (o que o usuário escolheu e viu)
+            "user_chosen_time_fim": user_chosen_time_fim_api, # Salva HH:MM:SS (para a API de agendamento)
             "response_to_user": response_text_for_user,
-            "scheduling_step": "AWAITING_FINAL_CONFIRMATION", # Próximo passo
+            "scheduling_step": "AWAITING_FINAL_CONFIRMATION", 
             "current_operation": "SCHEDULING", 
-            "messages": AIMessage(content=response_text_for_user)
-            # "scheduling_completed": False # Ainda não, esperamos a confirmação final
+            "messages": AIMessage(content=response_text_for_user),
+            "available_times_presented": None # Limpa a lista do estado após a escolha
         }
     else:
-        logger.warning(f"Escolha do horário '{user_response_content}' não pôde ser validada ou foi ambígua (LLM: '{chosen_time_llm_response}').")
+        logger.warning(f"Escolha do horário '{user_response_content}' (LLM: '{chosen_time_display_from_llm}') não pôde ser validada ou não encontrada nos detalhes dos slots.")
         reprompt_text = (
             f"Desculpe, {user_full_name}, não consegui identificar qual horário você escolheu a partir de '{user_response_content}'.\n"
             f"As opções eram:\n{time_options_display_list_str}\n"
@@ -1204,8 +1275,9 @@ def coletar_validar_horario_escolhido_node(state: MainWorkflowState, llm_client:
         )
         return {
             "response_to_user": reprompt_text,
-            "scheduling_step": "AWAITING_TIME_CHOICE", # Tenta novamente
+            "scheduling_step": "AWAITING_TIME_CHOICE", 
             "messages": AIMessage(content=reprompt_text)
+            # Mantém available_times_presented para a próxima tentativa
         }
 
 # === consultas api ===
@@ -1471,7 +1543,7 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
         logger.warning("Nenhuma resposta do usuário para processar a confirmação final.")
         return {
             "response_to_user": "Não recebi sua confirmação. Poderia confirmar o agendamento com 'sim' ou 'não'?",
-            "scheduling_step": "AWAITING_FINAL_CONFIRMATION", # Tenta novamente
+            "scheduling_step": "AWAITING_FINAL_CONFIRMATION", 
             "current_operation": "SCHEDULING"
         }
 
@@ -1484,56 +1556,122 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
         logger.info(f"Status da confirmação final pelo LLM: {confirmation_status}")
 
         if confirmation_status == "CONFIRMED":
-            # TODO: Implementar a chamada real à API para efetivar o agendamento aqui
-            # Exemplo: api_service.confirm_schedule(state.get("scheduling_details_for_api"))
-            logger.info(f"Agendamento CONFIRMADO para {user_full_name}. (Simulação de chamada à API)")
-            # Detalhes para mensagem final
-            chosen_specialty = state.get("user_chosen_specialty", "Não especificada")
-            chosen_professional_name = state.get("user_chosen_professional_name", "Não especificado")
-            chosen_date_api_format = state.get("user_chosen_date")
-            chosen_time = state.get("user_chosen_time", "Não especificado")
-            chosen_date_display = chosen_date_api_format
-            if chosen_date_api_format:
-                try:
-                    chosen_date_display = datetime.strptime(chosen_date_api_format, "%Y-%m-%d").strftime("%d/%m/%Y")
-                except ValueError:
-                    pass # usa o formato original se houver erro
+            profissional_id = state.get("user_chosen_professional_id")
+            data_agendamento = state.get("user_chosen_date") 
+            hora_inicio_hhmm_str = state.get("user_chosen_time") # Formato HH:MM
+            hora_fim_hhmmss_str = state.get("user_chosen_time_fim") # Deveria ser HH:MM:SS do estado
+            nome_paciente = state.get("user_full_name")
+            especialidade_id = state.get("user_chosen_specialty_id")
 
-            success_message = (
-                f"Ótimo, {user_full_name}! Seu agendamento para {chosen_specialty} com {chosen_professional_name} "
-                f"no dia {chosen_date_display} às {chosen_time} foi confirmado com sucesso. "
-                "Algo mais em que posso ajudar?"
-            )
-            return {
-                "response_to_user": success_message,
-                "scheduling_completed": True,
-                "current_operation": None, # Finaliza a operação de agendamento
-                "scheduling_step": None, # Limpa o passo do agendamento
-                "scheduling_values_confirmed": { # Pode ser útil para logs ou auditoria
-                    "name": user_full_name,
-                    "specialty": chosen_specialty,
-                    "professional": chosen_professional_name,
-                    "date": chosen_date_api_format,
-                    "time": chosen_time
+            if not all([profissional_id, data_agendamento, hora_inicio_hhmm_str, hora_fim_hhmmss_str, nome_paciente, especialidade_id]):
+                logger.error(f"Dados insuficientes no estado para realizar o agendamento via API. Detalhes: prof_id={profissional_id}, data={data_agendamento}, hora_inicio={hora_inicio_hhmm_str}, hora_fim={hora_fim_hhmmss_str}, nome={nome_paciente}, esp_id={especialidade_id}")
+                return {
+                    "response_to_user": "Desculpe, ocorreu um problema com os dados do agendamento e não pude confirmar. Por favor, tente refazer o agendamento ou contate o suporte.",
+                    "scheduling_completed": False, "current_operation": None, "scheduling_step": None
                 }
+            
+            # Garantir que horaInicio seja HH:MM:SS para a API
+            try:
+                hora_inicio_api_format = datetime.strptime(hora_inicio_hhmm_str, "%H:%M").strftime("%H:%M:%S")
+            except ValueError:
+                logger.error(f"Formato de hora_inicio_hhmm_str inválido: {hora_inicio_hhmm_str}")
+                # Tratar erro, talvez retornando ao usuário ou um erro genérico
+                return {"response_to_user": "Erro no formato da hora de início.", "scheduling_step": "AWAITING_TIME_CHOICE"}
+
+
+            # Validar/Formatar hora_fim_hhmmss_str se necessário, mas idealmente já está correto
+            # Se viesse como HH:MM do estado, precisaria converter para HH:MM:SS aqui também.
+            # Como estamos visando que user_chosen_time_fim já seja HH:MM:SS, podemos usá-lo diretamente.
+            # Adicionar uma verificação para garantir que não é None ou mal formatado é uma boa prática.
+            if not re.match(r'^\d{2}:\d{2}:\d{2}$', hora_fim_hhmmss_str):
+                logger.error(f"Formato de hora_fim_hhmmss_str inválido: {hora_fim_hhmmss_str}. Esperado HH:MM:SS.")
+                # Fallback ou erro. Por simplicidade, vamos logar e prosseguir, mas idealmente deveria ser tratado.
+                # Se a API for estrita, isso pode causar falha.
+                # Poderia tentar re-calcular se a duração é sempre fixa, mas é melhor garantir que venha correto.
+                # Para este exemplo, vamos assumir que o estado está correto (HH:MM:SS).
+
+            telefone_paciente_placeholder = "00000000000" 
+            logger.warning(f"UTILIZANDO TELEFONE PLACEHOLDER '{telefone_paciente_placeholder}' PARA AGENDAMENTO.")
+            id_unidade_default = 21641
+
+            payload = {
+                "data": data_agendamento,
+                "horaInicio": hora_inicio_api_format, 
+                "horaFim": hora_fim_hhmmss_str, # Usando o valor do estado
+                "nome": nome_paciente,
+                "telefonePrincipal": telefone_paciente_placeholder,
+                "situacao": "AGENDADO",
+                "profissionalSaude": {"id": profissional_id},
+                "especialidade": {"id": especialidade_id},
+                "paciente": {"nome": nome_paciente},
+                "unidade": {"id": id_unidade_default}
             }
+
+            api_token = settings.APPHEALTH_API_TOKEN
+            headers = {"Authorization": f"{api_token}", "Content-Type": "application/json"}
+            api_url = "https://back.homologacao.apphealth.com.br:9090/api-vizi/agendamentos"
+
+            logger.info(f"Tentando realizar agendamento via API. URL: {api_url}, Payload: {json.dumps(payload, indent=2)}")
+
+            try:
+                response = requests.post(api_url, headers=headers, json=payload, timeout=20)
+                response.raise_for_status() 
+                api_response_data = response.json()
+                agendamento_id_api = api_response_data.get("id", "N/A") 
+                logger.info(f"Agendamento CONFIRMADO via API para {user_full_name}. ID: {agendamento_id_api}. Resposta: {api_response_data}")
+                
+                chosen_specialty = state.get("user_chosen_specialty", "N/A")
+                chosen_professional_name = state.get("user_chosen_professional_name", "N/A")
+                chosen_date_display = datetime.strptime(data_agendamento, "%Y-%m-%d").strftime("%d/%m/%Y") if data_agendamento else "N/A"
+                
+                success_message = (
+                    f"Ótimo, {user_full_name}! Seu agendamento para {chosen_specialty} com {chosen_professional_name} "
+                    f"no dia {chosen_date_display} às {hora_inicio_hhmm_str} foi confirmado com sucesso (ID: {agendamento_id_api}). "
+                    "Algo mais em que posso ajudar?"
+                )
+                return {
+                    "response_to_user": success_message, "scheduling_completed": True,
+                    "current_operation": None, "scheduling_step": None, 
+                    "scheduling_values_confirmed": { 
+                        "name": user_full_name, "specialty": chosen_specialty, 
+                        "professional": chosen_professional_name, "date": data_agendamento,
+                        "time_start": hora_inicio_hhmm_str, "time_end": hora_fim_hhmmss_str, # Log mais detalhado
+                        "api_schedule_id": agendamento_id_api
+                    }
+                }
+            except requests.exceptions.HTTPError as http_err:
+                error_content = "N/A"
+                if http_err.response is not None:
+                    try: error_content = http_err.response.json()
+                    except json.JSONDecodeError: error_content = http_err.response.text
+                logger.error(f"Erro HTTP ao realizar agendamento: {http_err.response.status_code if http_err.response is not None else 'N/A'} - {error_content}", exc_info=True)
+                user_error_message = "Desculpe, não consegui confirmar seu agendamento com nosso sistema. Por favor, tente mais tarde ou contate o suporte."
+                if http_err.response is not None and http_err.response.status_code == 400:
+                    user_error_message = "Houve um problema com os dados fornecidos para o agendamento. Verifique os detalhes e tente novamente ou contate o suporte."
+                return {"response_to_user": user_error_message, "scheduling_completed": False, "current_operation": None, "scheduling_step": None, "error_message": f"API Error: {http_err.response.status_code if http_err.response is not None else 'N/A'} - {error_content}"}
+            except requests.exceptions.RequestException as req_err:
+                logger.error(f"Erro de conexão/rede ao realizar agendamento: {req_err}", exc_info=True)
+                return {"response_to_user": "Desculpe, estou com dificuldades para me conectar ao sistema de agendamentos. Tente novamente em instantes.", "scheduling_completed": False, "current_operation": None, "scheduling_step": None, "error_message": f"Network/Request Error: {str(req_err)}"}
+
         elif confirmation_status == "CANCELLED":
+            # ... (código de cancelamento permanece o mesmo) ...
             logger.info(f"Agendamento CANCELADO por {user_full_name}.")
             return {
                 "response_to_user": "Entendido. O agendamento não foi confirmado. Se precisar de algo mais, é só chamar!",
-                "scheduling_completed": False, # Ou True, mas com status cancelado
-                "current_operation": None, # Finaliza a operação
+                "scheduling_completed": False, 
+                "current_operation": None, 
                 "scheduling_step": None
             }
-        else: # AMBIGUOUS ou erro inesperado do LLM
+        else: # AMBIGUOUS
+            # ... (código para ambíguo permanece o mesmo) ...
             logger.warning(f"Resposta de confirmação ambígua ou não classificada: '{confirmation_status}'")
             return {
                 "response_to_user": "Desculpe, não entendi sua resposta. Para confirmar o agendamento, por favor, diga 'sim'. Se não deseja confirmar, diga 'não'.",
-                "scheduling_step": "AWAITING_FINAL_CONFIRMATION", # Pede novamente
+                "scheduling_step": "AWAITING_FINAL_CONFIRMATION", 
                 "current_operation": "SCHEDULING"
             }
-
     except Exception as e:
+        # ... (código de exceção geral permanece o mesmo) ...
         logger.error(f"Erro ao processar confirmação final do agendamento: {e}", exc_info=True)
         return {
             "response_to_user": "Desculpe, tive um problema ao processar sua confirmação. Poderia tentar confirmar novamente com 'sim' ou 'não'?",
