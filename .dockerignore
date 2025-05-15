@@ -50,6 +50,3 @@ logs/
 # Arquivos específicos do sistema operacional
 .DS_Store
 Thumbs.db
-
-# Outros arquivos/pastas específicos do seu projeto que não devem ir para a imagem
-# Ex: docs/, notebooks/, etc., se não forem necessários no runtime
