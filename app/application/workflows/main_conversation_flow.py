@@ -33,7 +33,8 @@ from app.application.prompts.conversation_prompts import (
     VALIDATE_CHOSEN_DATE_PROMPT_TEMPLATE,
     PRESENT_AVAILABLE_TIMES_PROMPT_TEMPLATE,
     VALIDATE_CHOSEN_TIME_PROMPT_TEMPLATE,
-    FINAL_SCHEDULING_CONFIRMATION_PROMPT_TEMPLATE
+    FINAL_SCHEDULING_CONFIRMATION_PROMPT_TEMPLATE,
+    VALIDATE_FINAL_CONFIRMATION_PROMPT_TEMPLATE
 )
 from app.domain.models.user_profile import FullNameModel
 from app.infrastructure.llm_clients import get_llm_client
@@ -1190,7 +1191,7 @@ def coletar_validar_horario_escolhido_node(state: MainWorkflowState, llm_client:
             "user_chosen_time": chosen_time_llm_response,
             "response_to_user": response_text_for_user,
             "scheduling_step": "AWAITING_FINAL_CONFIRMATION", # Próximo passo
-            "current_operation": "SCHEDULING_PENDING_CONFIRMATION", # Ou um novo estado para indicar que está quase lá
+            "current_operation": "SCHEDULING", 
             "messages": AIMessage(content=response_text_for_user)
             # "scheduling_completed": False # Ainda não, esperamos a confirmação final
         }
@@ -1458,6 +1459,88 @@ def fetch_and_present_available_dates_node(state: MainWorkflowState, llm_client:
         "available_dates_presented": datas_para_apresentar_api_format # Salva no formato AAAA-MM-DD
     }
 
+def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> dict:
+    """
+    Processa a resposta do usuário à pergunta de confirmação final do agendamento.
+    """
+    logger.debug("--- Nó Agendamento: process_final_scheduling_confirmation_node ---")
+    user_response_content = get_last_user_message_content(state["messages"])
+    user_full_name = state.get("user_full_name", "Cliente")
+
+    if not user_response_content:
+        logger.warning("Nenhuma resposta do usuário para processar a confirmação final.")
+        return {
+            "response_to_user": "Não recebi sua confirmação. Poderia confirmar o agendamento com 'sim' ou 'não'?",
+            "scheduling_step": "AWAITING_FINAL_CONFIRMATION", # Tenta novamente
+            "current_operation": "SCHEDULING"
+        }
+
+    logger.info(f"Resposta do usuário para confirmação final: '{user_response_content}'")
+
+    try:
+        prompt_messages = VALIDATE_FINAL_CONFIRMATION_PROMPT_TEMPLATE.format_messages(user_response=user_response_content)
+        llm_response = llm_client.invoke(prompt_messages)
+        confirmation_status = llm_response.content.strip().upper()
+        logger.info(f"Status da confirmação final pelo LLM: {confirmation_status}")
+
+        if confirmation_status == "CONFIRMED":
+            # TODO: Implementar a chamada real à API para efetivar o agendamento aqui
+            # Exemplo: api_service.confirm_schedule(state.get("scheduling_details_for_api"))
+            logger.info(f"Agendamento CONFIRMADO para {user_full_name}. (Simulação de chamada à API)")
+            # Detalhes para mensagem final
+            chosen_specialty = state.get("user_chosen_specialty", "Não especificada")
+            chosen_professional_name = state.get("user_chosen_professional_name", "Não especificado")
+            chosen_date_api_format = state.get("user_chosen_date")
+            chosen_time = state.get("user_chosen_time", "Não especificado")
+            chosen_date_display = chosen_date_api_format
+            if chosen_date_api_format:
+                try:
+                    chosen_date_display = datetime.strptime(chosen_date_api_format, "%Y-%m-%d").strftime("%d/%m/%Y")
+                except ValueError:
+                    pass # usa o formato original se houver erro
+
+            success_message = (
+                f"Ótimo, {user_full_name}! Seu agendamento para {chosen_specialty} com {chosen_professional_name} "
+                f"no dia {chosen_date_display} às {chosen_time} foi confirmado com sucesso. "
+                "Algo mais em que posso ajudar?"
+            )
+            return {
+                "response_to_user": success_message,
+                "scheduling_completed": True,
+                "current_operation": None, # Finaliza a operação de agendamento
+                "scheduling_step": None, # Limpa o passo do agendamento
+                "scheduling_values_confirmed": { # Pode ser útil para logs ou auditoria
+                    "name": user_full_name,
+                    "specialty": chosen_specialty,
+                    "professional": chosen_professional_name,
+                    "date": chosen_date_api_format,
+                    "time": chosen_time
+                }
+            }
+        elif confirmation_status == "CANCELLED":
+            logger.info(f"Agendamento CANCELADO por {user_full_name}.")
+            return {
+                "response_to_user": "Entendido. O agendamento não foi confirmado. Se precisar de algo mais, é só chamar!",
+                "scheduling_completed": False, # Ou True, mas com status cancelado
+                "current_operation": None, # Finaliza a operação
+                "scheduling_step": None
+            }
+        else: # AMBIGUOUS ou erro inesperado do LLM
+            logger.warning(f"Resposta de confirmação ambígua ou não classificada: '{confirmation_status}'")
+            return {
+                "response_to_user": "Desculpe, não entendi sua resposta. Para confirmar o agendamento, por favor, diga 'sim'. Se não deseja confirmar, diga 'não'.",
+                "scheduling_step": "AWAITING_FINAL_CONFIRMATION", # Pede novamente
+                "current_operation": "SCHEDULING"
+            }
+
+    except Exception as e:
+        logger.error(f"Erro ao processar confirmação final do agendamento: {e}", exc_info=True)
+        return {
+            "response_to_user": "Desculpe, tive um problema ao processar sua confirmação. Poderia tentar confirmar novamente com 'sim' ou 'não'?",
+            "scheduling_step": "AWAITING_FINAL_CONFIRMATION",
+            "current_operation": "SCHEDULING"
+        }
+
 # === consulta api ===
 
 # <<< ADICIONANDO AS FUNÇÕES DOS NÓS PLACEHOLDER >>>
@@ -1540,6 +1623,8 @@ def route_scheduling_step(state: MainWorkflowState) -> str:
         return "fetch_and_present_available_times_node"
     elif step == "AWAITING_TIME_CHOICE":
         return "coletar_validar_horario_escolhido_node"
+    elif step == "AWAITING_FINAL_CONFIRMATION":
+        return "process_final_scheduling_confirmation_node"
     
     logger.warning(f"Roteamento do Agendamento: Passo desconhecido ou não manuseado '{step}'. Finalizando o fluxo de agendamento.")
     return END
@@ -1600,7 +1685,9 @@ def get_main_conversation_graph_definition() -> StateGraph:
     workflow_builder.add_node("collect_validate_chosen_date_node", partial(collect_validate_chosen_date_node, llm_client=llm_instance))
     workflow_builder.add_node("fetch_and_present_available_times_node", partial(fetch_and_present_available_times_node, llm_client=llm_instance))
     workflow_builder.add_node("coletar_validar_horario_escolhido_node", partial(coletar_validar_horario_escolhido_node, llm_client=llm_instance))
-    
+    workflow_builder.add_node("process_final_scheduling_confirmation_node", partial(process_final_scheduling_confirmation_node, llm_client=llm_instance))
+
+
     workflow_builder.set_entry_point("dispatcher")
 
     # Roteamento a partir do dispatcher inicial
@@ -1643,6 +1730,7 @@ def get_main_conversation_graph_definition() -> StateGraph:
             "collect_validate_chosen_date_node": "collect_validate_chosen_date_node",
             "fetch_and_present_available_times_node": "fetch_and_present_available_times_node",
             "coletar_validar_horario_escolhido_node": "coletar_validar_horario_escolhido_node",
+            "process_final_scheduling_confirmation_node": "process_final_scheduling_confirmation_node",
             END: END 
         }
     )
@@ -1676,9 +1764,9 @@ def get_main_conversation_graph_definition() -> StateGraph:
     workflow_builder.add_edge("coletar_validar_turno_node", "route_scheduling_step") # Continua para buscar datas
     workflow_builder.add_edge("fetch_and_present_available_dates_node", END)
     workflow_builder.add_edge("collect_validate_chosen_date_node", "route_scheduling_step")
-    workflow_builder.add_edge("fetch_and_present_available_times_node", "route_scheduling_step")
+    workflow_builder.add_edge("fetch_and_present_available_times_node", END)
     workflow_builder.add_edge("coletar_validar_horario_escolhido_node", END)
-
+    workflow_builder.add_edge("process_final_scheduling_confirmation_node", END)
     return workflow_builder
 
 # === FUNÇÃO DE EXECUÇÃO DO FLUXO (Permanece a mesma em sua lógica interna) ===

@@ -233,10 +233,9 @@ PRESENT_AVAILABLE_TIMES_PROMPT_TEMPLATE = ChatPromptTemplate.from_messages([
     """),
         ("human", "Por favor, me mostre os horários."), # Entrada de gatilho, pode ser genérica
         ("ai", """Perfeito, {user_name}! Para o dia {chosen_date} com {professional_name} no período da {chosen_turn}, temos os seguintes horários disponíveis:
-    {available_times_list_str}
+{available_times_list_str}
 
-    Por favor, digite o número correspondente ao horário que você deseja.
-    Ou, se preferir, pode dizer "nenhum desses" ou "voltar".
+Por favor, informeo horário que você deseja.
 """)
 ])
 
@@ -291,3 +290,27 @@ FINAL_SCHEDULING_CONFIRMATION_PROMPT_TEMPLATE = ChatPromptTemplate.from_messages
     """),
     ("human", "Confirmar agendamento") # Trigger genérico
 ])
+
+VALIDATE_FINAL_CONFIRMATION_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
+    """
+    Você é um assistente de agendamento. O usuário recebeu um resumo do agendamento e foi perguntado se confirma.
+    A resposta do usuário foi: "{user_response}"
+
+    Classifique a resposta do usuário em uma das seguintes categorias:
+    - "CONFIRMED": Se o usuário claramente confirmar o agendamento (ex: "sim", "confirmo", "pode confirmar", "ok", "certo").
+    - "CANCELLED": Se o usuário claramente cancelar ou negar o agendamento (ex: "não", "cancelar", "não quero").
+    - "AMBIGUOUS": Se a resposta não for uma confirmação ou cancelamento claro (ex: "talvez", "o que?", "depois").
+
+    Retorne APENAS a categoria.
+
+    Exemplos:
+    - Usuário: "sim" -> CONFIRMED
+    - Usuário: "pode ser" -> CONFIRMED
+    - Usuário: "cancela" -> CANCELLED
+    - Usuário: "acho que não" -> CANCELLED
+    - Usuário: "hmm" -> AMBIGUOUS
+
+    Resposta do usuário: "{user_response}"
+    Categoria:
+    """
+)
