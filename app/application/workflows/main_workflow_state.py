@@ -11,6 +11,7 @@ class MainWorkflowState(TypedDict, total=False):
 
     scheduling_step: Optional[str] = None
     user_full_name: Optional[str] = None
+    user_phone: Optional[str] = None 
     user_chosen_specialty: Optional[str] = None
     user_chosen_specialty_id: Optional[int]
 

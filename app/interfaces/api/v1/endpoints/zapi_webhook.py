@@ -35,8 +35,9 @@ async def process_incoming_zapi_message(
             return
 
         session_id = payload.phone
+        user_phone_number = payload.phone
         
-        logger.info(f"ZAPI_WEBHOOK: Processando mensagem (ID Z-API: {payload.message_id}) de {session_id}: '{user_text}'")
+        logger.info(f"ZAPI_WEBHOOK: Processando mensagem (ID Z-API: {payload.message_id}) de {session_id} (Telefone: {user_phone_number}) : '{user_text}'")
         logger.info(f"ZAPI_WEBHOOK: Direcionando para arun_scheduling_flow para session_id: {session_id}")
 
         agent_response_text = None
@@ -51,7 +52,8 @@ async def process_incoming_zapi_message(
             agent_response_text = await arun_main_conversation_flow(
                 user_text=user_text,
                 session_id=session_id,
-                checkpointer=checkpointer
+                checkpointer=checkpointer,
+                user_phone_number=user_phone_number
             )
 
         if agent_response_text:

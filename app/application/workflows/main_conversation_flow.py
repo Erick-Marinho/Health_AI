@@ -1504,6 +1504,7 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
     logger.debug("--- Nó Agendamento: process_final_scheduling_confirmation_node ---")
     user_response_content = get_last_user_message_content(state["messages"])
     user_full_name = state.get("user_full_name", "Cliente")
+    user_phone_from_state = state.get("user_phone")
 
     if not user_response_content:
         logger.warning("Nenhuma resposta do usuário para processar a confirmação final.")
@@ -1556,8 +1557,8 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
                 # Poderia tentar re-calcular se a duração é sempre fixa, mas é melhor garantir que venha correto.
                 # Para este exemplo, vamos assumir que o estado está correto (HH:MM:SS).
 
-            telefone_paciente_placeholder = "00000000000" 
-            logger.warning(f"UTILIZANDO TELEFONE PLACEHOLDER '{telefone_paciente_placeholder}' PARA AGENDAMENTO.")
+            telefone_para_api = user_phone_from_state if user_phone_from_state else "00000000000" 
+            
             id_unidade_default = 21641
 
             payload = {
@@ -1565,7 +1566,7 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
                 "horaInicio": hora_inicio_api_format, 
                 "horaFim": hora_fim_hhmmss_str, # Usando o valor do estado
                 "nome": nome_paciente,
-                "telefonePrincipal": telefone_paciente_placeholder,
+                "telefonePrincipal": telefone_para_api,
                 "situacao": "AGENDADO",
                 "profissionalSaude": {"id": profissional_id},
                 "especialidade": {"id": especialidade_id},
@@ -1878,7 +1879,8 @@ def get_main_conversation_graph_definition() -> StateGraph:
 async def arun_main_conversation_flow(
     user_text: str,
     session_id: str,
-    checkpointer: BaseCheckpointSaver 
+    checkpointer: BaseCheckpointSaver, 
+    user_phone: Optional[str] = None,
 ) -> Optional[str]:
     logger.info(f"Executando arun_main_conversation_flow para session_id: {session_id} com texto: '{user_text}'")
     
@@ -1891,18 +1893,22 @@ async def arun_main_conversation_flow(
     
     final_state: Optional[MainWorkflowState] = None
     
-    input_data = {"messages": [HumanMessage(content=user_text)]} 
+    initial_input_data = {"messages": [HumanMessage(content=user_text)]} 
+
+    if user_phone:
+        initial_input_data["user_phone"] = user_phone
+    
     config = {"configurable": {"thread_id": session_id}}
     
-    logger.debug(f"Invocando grafo principal para session_id: {session_id} com input_data: {input_data}")
+    logger.debug(f"Invocando grafo principal para session_id: {session_id} com input_data: {initial_input_data}")
 
     try:
-        async for event_chunk in graph_with_persistence.astream(input_data, config=config, stream_mode="values"):
+        async for event_chunk in graph_with_persistence.astream(initial_input_data, config=config, stream_mode="values"):
             final_state = event_chunk 
             logger.debug(f"Chunk do grafo (session_id {session_id}): {event_chunk}")
     except Exception as graph_error:
         logger.error(f"Erro ao invocar o grafo LangGraph para thread {session_id}: {graph_error}", exc_info=True)
-        return "Desculpe, ocorreu um erro interno ao processar sua solicitação."
+        return "Desculpe, ocorreu um erro interno ao processar sua solicitação. - Erro: {graph_error}"
 
     if final_state:
         logger.info(f"Estado final do grafo (session_id {session_id}): {final_state}")
