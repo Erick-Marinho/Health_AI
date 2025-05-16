@@ -21,10 +21,7 @@ class FullNameModel(BaseModel):
         if len(name_cleaned.split()) < 2:
             raise ValueError("O nome completo deve conter pelo menos um nome e um sobrenome.")
         
-        # Permite letras, espaços, e acentos comuns em nomes em português
         if not re.match(r'^[a-zA-ZÀ-ÿ\s]+$', name_cleaned):
             raise ValueError("O nome completo deve conter apenas letras e espaços.")
         
-        # Opcional: Capitalizar cada parte do nome para consistência
-        # return ' '.join(word.capitalize() for word in name_cleaned.split())
         return name_cleaned

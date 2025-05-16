@@ -19,7 +19,7 @@ services:
       - POSTGRES_PORT=${POSTGRES_PORT:-5432}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - APPHEALTH_API_TOKEN=${APPHEALTH_API_TOKEN}
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      - DATABASE_URL=${DATABASE_URL}
 
   db:
     image: ankane/pgvector:latest

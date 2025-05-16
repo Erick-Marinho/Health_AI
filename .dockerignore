@@ -51,6 +51,3 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Arquivos de Ambiente
-.env
-.env.*
