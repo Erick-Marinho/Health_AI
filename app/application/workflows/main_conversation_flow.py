@@ -1506,7 +1506,6 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
     user_full_name = state.get("user_full_name", "Cliente")
     user_phone_from_state = state.get("user_phone")
 
-    # Formatação do número de telefone
     telefone_formatado_para_api = user_phone_from_state
     if user_phone_from_state and isinstance(user_phone_from_state, str) and len(user_phone_from_state) > 2 and user_phone_from_state.startswith("55"):
         telefone_formatado_para_api = user_phone_from_state[2:]
@@ -1515,7 +1514,7 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
         logger.info(f"Número de telefone '{user_phone_from_state}' utilizado como está (não inicia com '55' ou é muito curto).")
     else:
         logger.warning("Número de telefone não encontrado no estado. Usando placeholder se necessário para API de agendamento.")
-        telefone_formatado_para_api = "00000000000" # Placeholder caso não haja telefone no estado
+        telefone_formatado_para_api = "00000000000"
 
     if not user_response_content:
         logger.warning("Nenhuma resposta do usuário para processar a confirmação final.")
@@ -1595,19 +1594,19 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
                 agendamento_id_api = api_response_data.get("id", "N/A") 
                 logger.info(f"Agendamento CONFIRMADO via API para {user_full_name}. ID: {agendamento_id_api}. Resposta: {api_response_data}")
 
-                if telefone_formatado_para_api and telefone_formatado_para_api != "00000000000":
-                    n8n_webhook_url = f"https://n8n-server.apphealth.com.br/webhook/remove-tag?phone={telefone_formatado_para_api}"
+                if user_phone_from_state:
+                    n8n_webhook_url = f"https://n8n-server.apphealth.com.br/webhook/remove-tag?phone={user_phone_from_state}"
                     logger.info(f"Tentando chamar webhook N8N para remover tag: GET {n8n_webhook_url}")
                     try:
                         response_n8n = requests.get(n8n_webhook_url, timeout=10)
                         response_n8n.raise_for_status()
-                        logger.info(f"Webhook N8N 'remove-tag' chamado com sucesso para {telefone_formatado_para_api}. Status: {response_n8n.status_code}. Resposta: {response_n8n.text[:200]}")
+                        logger.info(f"Webhook N8N 'remove-tag' chamado com sucesso para {user_phone_from_state}. Status: {response_n8n.status_code}. Resposta: {response_n8n.text[:200]}")
                     except requests.exceptions.HTTPError as http_err_n8n:
-                        logger.error(f"Erro HTTP ao chamar webhook N8N 'remove-tag' para {telefone_formatado_para_api}: {http_err_n8n.response.status_code} - {http_err_n8n.response.text[:200] if http_err_n8n.response else 'Sem corpo'}", exc_info=False)
+                        logger.error(f"Erro HTTP ao chamar webhook N8N 'remove-tag' para {user_phone_from_state}: {http_err_n8n.response.status_code} - {http_err_n8n.response.text[:200] if http_err_n8n.response else 'Sem corpo'}", exc_info=False)
                     except requests.exceptions.RequestException as req_err_n8n:
-                        logger.error(f"Erro de requisição ao chamar webhook N8N 'remove-tag' para {telefone_formatado_para_api}: {req_err_n8n}", exc_info=False)
+                        logger.error(f"Erro de requisição ao chamar webhook N8N 'remove-tag' para {user_phone_from_state}: {req_err_n8n}", exc_info=False)
                     except Exception as e_n8n:
-                        logger.error(f"Erro inesperado ao chamar webhook N8N 'remove-tag' para {telefone_formatado_para_api}: {e_n8n}", exc_info=False)
+                        logger.error(f"Erro inesperado ao chamar webhook N8N 'remove-tag' para {user_phone_from_state}: {e_n8n}", exc_info=False)
                 else:
                     logger.warning("Não foi possível chamar o webhook N8N 'remove-tag' pois o número de telefone não está disponível no estado.")
                 
@@ -1617,7 +1616,7 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
                 
                 success_message = (
                     f"Ótimo, {user_full_name}! Seu agendamento para {chosen_specialty} com {chosen_professional_name} "
-                    f"no dia {chosen_date_display} às {hora_inicio_hhmm_str} foi confirmado com sucesso (ID: {agendamento_id_api}). "
+                    f"no dia {chosen_date_display} às {hora_inicio_hhmm_str} foi confirmado com sucesso (Ticket de confirmação: {agendamento_id_api}). "
                 )
                 return {
                     "response_to_user": success_message, "scheduling_completed": True,
