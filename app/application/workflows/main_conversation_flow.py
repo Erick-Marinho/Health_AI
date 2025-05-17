@@ -1506,6 +1506,17 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
     user_full_name = state.get("user_full_name", "Cliente")
     user_phone_from_state = state.get("user_phone")
 
+    # Formatação do número de telefone
+    telefone_formatado_para_api = user_phone_from_state
+    if user_phone_from_state and isinstance(user_phone_from_state, str) and len(user_phone_from_state) > 2 and user_phone_from_state.startswith("55"):
+        telefone_formatado_para_api = user_phone_from_state[2:]
+        logger.info(f"Número de telefone original '{user_phone_from_state}' formatado para '{telefone_formatado_para_api}' (removido '55' inicial).")
+    elif user_phone_from_state:
+        logger.info(f"Número de telefone '{user_phone_from_state}' utilizado como está (não inicia com '55' ou é muito curto).")
+    else:
+        logger.warning("Número de telefone não encontrado no estado. Usando placeholder se necessário para API de agendamento.")
+        telefone_formatado_para_api = "00000000000" # Placeholder caso não haja telefone no estado
+
     if not user_response_content:
         logger.warning("Nenhuma resposta do usuário para processar a confirmação final.")
         return {
@@ -1525,8 +1536,8 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
         if confirmation_status == "CONFIRMED":
             profissional_id = state.get("user_chosen_professional_id")
             data_agendamento = state.get("user_chosen_date") 
-            hora_inicio_hhmm_str = state.get("user_chosen_time") # Formato HH:MM
-            hora_fim_hhmmss_str = state.get("user_chosen_time_fim") # Deveria ser HH:MM:SS do estado
+            hora_inicio_hhmm_str = state.get("user_chosen_time") 
+            hora_fim_hhmmss_str = state.get("user_chosen_time_fim")
             nome_paciente = state.get("user_full_name")
             especialidade_id = state.get("user_chosen_specialty_id")
 
@@ -1537,30 +1548,33 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
                     "scheduling_completed": False, "current_operation": None, "scheduling_step": None
                 }
             
-            # Garantir que horaInicio seja HH:MM:SS para a API
             try:
                 hora_inicio_api_format = datetime.strptime(hora_inicio_hhmm_str, "%H:%M").strftime("%H:%M:%S")
             except ValueError:
                 logger.error(f"Formato de hora_inicio_hhmm_str inválido: {hora_inicio_hhmm_str}")
-                # Tratar erro, talvez retornando ao usuário ou um erro genérico
                 return {"response_to_user": "Erro no formato da hora de início.", "scheduling_step": "AWAITING_TIME_CHOICE"}
 
-
-            
             if not re.match(r'^\d{2}:\d{2}:\d{2}$', hora_fim_hhmmss_str):
                 logger.error(f"Formato de hora_fim_hhmmss_str inválido: {hora_fim_hhmmss_str}. Esperado HH:MM:SS.")
-                
+                return {"response_to_user": "Erro no formato da hora de fim.", "scheduling_step": "AWAITING_TIME_CHOICE"}
+            
+            telefone_para_payload_agendamento = telefone_formatado_para_api
+            if telefone_para_payload_agendamento == "00000000000" and user_phone_from_state is not None: 
+                 logger.warning(f"Apesar de user_phone_from_state ('{user_phone_from_state}') existir, telefone_formatado_para_api resultou em placeholder. Verifique a lógica de formatação.")
+            elif telefone_para_payload_agendamento == "00000000000":
+                 logger.warning(f"UTILIZANDO TELEFONE PLACEHOLDER '{telefone_para_payload_agendamento}' PARA AGENDAMENTO.")
+            else:
+                logger.info(f"Utilizando telefone '{telefone_para_payload_agendamento}' (formatado de '{user_phone_from_state}') para o agendamento.")
 
-            telefone_para_api = user_phone_from_state if user_phone_from_state else "00000000000" 
             
             id_unidade_default = 21641
 
             payload = {
                 "data": data_agendamento,
                 "horaInicio": hora_inicio_api_format, 
-                "horaFim": hora_fim_hhmmss_str, # Usando o valor do estado
+                "horaFim": hora_fim_hhmmss_str,
                 "nome": nome_paciente,
-                "telefonePrincipal": telefone_para_api,
+                "telefonePrincipal": telefone_para_payload_agendamento,
                 "situacao": "AGENDADO",
                 "profissionalSaude": {"id": profissional_id},
                 "especialidade": {"id": especialidade_id},
@@ -1581,19 +1595,19 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
                 agendamento_id_api = api_response_data.get("id", "N/A") 
                 logger.info(f"Agendamento CONFIRMADO via API para {user_full_name}. ID: {agendamento_id_api}. Resposta: {api_response_data}")
 
-                if user_phone_from_state:
-                    n8n_webhook_url = f"https://n8n-server.apphealth.com.br/webhook/remove-tag?phone={user_phone_from_state}"
+                if telefone_formatado_para_api and telefone_formatado_para_api != "00000000000":
+                    n8n_webhook_url = f"https://n8n-server.apphealth.com.br/webhook/remove-tag?phone={telefone_formatado_para_api}"
                     logger.info(f"Tentando chamar webhook N8N para remover tag: GET {n8n_webhook_url}")
                     try:
                         response_n8n = requests.get(n8n_webhook_url, timeout=10)
                         response_n8n.raise_for_status()
-                        logger.info(f"Webhook N8N 'remove-tag' chamado com sucesso para {user_phone_from_state}. Status: {response_n8n.status_code}. Resposta: {response_n8n.text[:200]}")
+                        logger.info(f"Webhook N8N 'remove-tag' chamado com sucesso para {telefone_formatado_para_api}. Status: {response_n8n.status_code}. Resposta: {response_n8n.text[:200]}")
                     except requests.exceptions.HTTPError as http_err_n8n:
-                        logger.error(f"Erro HTTP ao chamar webhook N8N 'remove-tag' para {user_phone_from_state}: {http_err_n8n.response.status_code} - {http_err_n8n.response.text[:200] if http_err_n8n.response else 'Sem corpo'}", exc_info=False)
+                        logger.error(f"Erro HTTP ao chamar webhook N8N 'remove-tag' para {telefone_formatado_para_api}: {http_err_n8n.response.status_code} - {http_err_n8n.response.text[:200] if http_err_n8n.response else 'Sem corpo'}", exc_info=False)
                     except requests.exceptions.RequestException as req_err_n8n:
-                        logger.error(f"Erro de requisição ao chamar webhook N8N 'remove-tag' para {user_phone_from_state}: {req_err_n8n}", exc_info=False)
+                        logger.error(f"Erro de requisição ao chamar webhook N8N 'remove-tag' para {telefone_formatado_para_api}: {req_err_n8n}", exc_info=False)
                     except Exception as e_n8n:
-                        logger.error(f"Erro inesperado ao chamar webhook N8N 'remove-tag' para {user_phone_from_state}: {e_n8n}", exc_info=False)
+                        logger.error(f"Erro inesperado ao chamar webhook N8N 'remove-tag' para {telefone_formatado_para_api}: {e_n8n}", exc_info=False)
                 else:
                     logger.warning("Não foi possível chamar o webhook N8N 'remove-tag' pois o número de telefone não está disponível no estado.")
                 
@@ -1613,7 +1627,8 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
                         "professional": chosen_professional_name, "date": data_agendamento,
                         "time_start": hora_inicio_hhmm_str, "time_end": hora_fim_hhmmss_str,
                         "api_schedule_id": agendamento_id_api,
-                        "phone": user_phone_from_state
+                        "phone_original": user_phone_from_state,
+                        "phone_formatted_for_api": telefone_formatado_para_api
                     }
                 }
             except requests.exceptions.HTTPError as http_err:
