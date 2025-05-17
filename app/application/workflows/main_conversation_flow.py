@@ -1546,16 +1546,10 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
                 return {"response_to_user": "Erro no formato da hora de início.", "scheduling_step": "AWAITING_TIME_CHOICE"}
 
 
-            # Validar/Formatar hora_fim_hhmmss_str se necessário, mas idealmente já está correto
-            # Se viesse como HH:MM do estado, precisaria converter para HH:MM:SS aqui também.
-            # Como estamos visando que user_chosen_time_fim já seja HH:MM:SS, podemos usá-lo diretamente.
-            # Adicionar uma verificação para garantir que não é None ou mal formatado é uma boa prática.
+            
             if not re.match(r'^\d{2}:\d{2}:\d{2}$', hora_fim_hhmmss_str):
                 logger.error(f"Formato de hora_fim_hhmmss_str inválido: {hora_fim_hhmmss_str}. Esperado HH:MM:SS.")
-                # Fallback ou erro. Por simplicidade, vamos logar e prosseguir, mas idealmente deveria ser tratado.
-                # Se a API for estrita, isso pode causar falha.
-                # Poderia tentar re-calcular se a duração é sempre fixa, mas é melhor garantir que venha correto.
-                # Para este exemplo, vamos assumir que o estado está correto (HH:MM:SS).
+                
 
             telefone_para_api = user_phone_from_state if user_phone_from_state else "00000000000" 
             
@@ -1586,6 +1580,22 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
                 api_response_data = response.json()
                 agendamento_id_api = api_response_data.get("id", "N/A") 
                 logger.info(f"Agendamento CONFIRMADO via API para {user_full_name}. ID: {agendamento_id_api}. Resposta: {api_response_data}")
+
+                if user_phone_from_state:
+                    n8n_webhook_url = f"https://n8n-server.apphealth.com.br/webhook/remove-tag?phone={user_phone_from_state}"
+                    logger.info(f"Tentando chamar webhook N8N para remover tag: GET {n8n_webhook_url}")
+                    try:
+                        response_n8n = requests.get(n8n_webhook_url, timeout=10)
+                        response_n8n.raise_for_status()
+                        logger.info(f"Webhook N8N 'remove-tag' chamado com sucesso para {user_phone_from_state}. Status: {response_n8n.status_code}. Resposta: {response_n8n.text[:200]}")
+                    except requests.exceptions.HTTPError as http_err_n8n:
+                        logger.error(f"Erro HTTP ao chamar webhook N8N 'remove-tag' para {user_phone_from_state}: {http_err_n8n.response.status_code} - {http_err_n8n.response.text[:200] if http_err_n8n.response else 'Sem corpo'}", exc_info=False)
+                    except requests.exceptions.RequestException as req_err_n8n:
+                        logger.error(f"Erro de requisição ao chamar webhook N8N 'remove-tag' para {user_phone_from_state}: {req_err_n8n}", exc_info=False)
+                    except Exception as e_n8n:
+                        logger.error(f"Erro inesperado ao chamar webhook N8N 'remove-tag' para {user_phone_from_state}: {e_n8n}", exc_info=False)
+                else:
+                    logger.warning("Não foi possível chamar o webhook N8N 'remove-tag' pois o número de telefone não está disponível no estado.")
                 
                 chosen_specialty = state.get("user_chosen_specialty", "N/A")
                 chosen_professional_name = state.get("user_chosen_professional_name", "N/A")
@@ -1594,7 +1604,6 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
                 success_message = (
                     f"Ótimo, {user_full_name}! Seu agendamento para {chosen_specialty} com {chosen_professional_name} "
                     f"no dia {chosen_date_display} às {hora_inicio_hhmm_str} foi confirmado com sucesso (ID: {agendamento_id_api}). "
-                    "Algo mais em que posso ajudar?"
                 )
                 return {
                     "response_to_user": success_message, "scheduling_completed": True,
@@ -1602,8 +1611,9 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
                     "scheduling_values_confirmed": { 
                         "name": user_full_name, "specialty": chosen_specialty, 
                         "professional": chosen_professional_name, "date": data_agendamento,
-                        "time_start": hora_inicio_hhmm_str, "time_end": hora_fim_hhmmss_str, # Log mais detalhado
-                        "api_schedule_id": agendamento_id_api
+                        "time_start": hora_inicio_hhmm_str, "time_end": hora_fim_hhmmss_str,
+                        "api_schedule_id": agendamento_id_api,
+                        "phone": user_phone_from_state
                     }
                 }
             except requests.exceptions.HTTPError as http_err:
@@ -1621,7 +1631,6 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
                 return {"response_to_user": "Desculpe, estou com dificuldades para me conectar ao sistema de agendamentos. Tente novamente em instantes.", "scheduling_completed": False, "current_operation": None, "scheduling_step": None, "error_message": f"Network/Request Error: {str(req_err)}"}
 
         elif confirmation_status == "CANCELLED":
-            # ... (código de cancelamento permanece o mesmo) ...
             logger.info(f"Agendamento CANCELADO por {user_full_name}.")
             return {
                 "response_to_user": "Entendido. O agendamento não foi confirmado. Se precisar de algo mais, é só chamar!",
@@ -1629,8 +1638,7 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
                 "current_operation": None, 
                 "scheduling_step": None
             }
-        else: # AMBIGUOUS
-            # ... (código para ambíguo permanece o mesmo) ...
+        else: 
             logger.warning(f"Resposta de confirmação ambígua ou não classificada: '{confirmation_status}'")
             return {
                 "response_to_user": "Desculpe, não entendi sua resposta. Para confirmar o agendamento, por favor, diga 'sim'. Se não deseja confirmar, diga 'não'.",
@@ -1638,7 +1646,6 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
                 "current_operation": "SCHEDULING"
             }
     except Exception as e:
-        # ... (código de exceção geral permanece o mesmo) ...
         logger.error(f"Erro ao processar confirmação final do agendamento: {e}", exc_info=True)
         return {
             "response_to_user": "Desculpe, tive um problema ao processar sua confirmação. Poderia tentar confirmar novamente com 'sim' ou 'não'?",
@@ -1690,13 +1697,11 @@ def route_after_categorization(state: MainWorkflowState) -> str:
     if categoria == "Saudação ou Despedida":
         return "handle_greeting_farewell"
     elif categoria == "Criar Agendamento": 
-        # Inicia a operação de agendamento e vai para o primeiro passo
-        # O nó de destino (solicitar_nome_agendamento_node) definirá current_operation e scheduling_step
         return "solicitar_nome_agendamento_node" 
     elif categoria == "Erro na Categorização" or categoria == "Indefinido":
-        return "handle_fallback_placeholder" # Fallback direto
+        return "handle_fallback_placeholder"
     else: 
-        return "handle_fallback_placeholder" # Fallback para outras categorias
+        return "handle_fallback_placeholder"
 
 def route_scheduling_step(state: MainWorkflowState) -> str:
     step = state.get("scheduling_step")
