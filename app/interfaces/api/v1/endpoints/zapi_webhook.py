@@ -53,7 +53,7 @@ async def process_incoming_zapi_message(
                 user_text=user_text,
                 session_id=session_id,
                 checkpointer=checkpointer,
-                user_phone_number=user_phone_number
+                user_phone=user_phone_number
             )
 
         if agent_response_text:
