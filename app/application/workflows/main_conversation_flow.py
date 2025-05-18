@@ -925,7 +925,7 @@ def collect_validate_chosen_professional_node(state: MainWorkflowState, llm_clie
         next_question_response = llm_client.invoke(next_question_prompt)
         response_text_for_user = next_question_response.content.strip()
         
-        return {
+        return_state = {
             "user_chosen_professional_id": chosen_prof_id,
             "user_chosen_professional_name": chosen_prof_name,
             "response_to_user": response_text_for_user, 
@@ -933,6 +933,8 @@ def collect_validate_chosen_professional_node(state: MainWorkflowState, llm_clie
             "current_operation": "SCHEDULING",
             "available_professionals_list": None 
         }
+        logger.debug(f"Retornando de collect_validate_chosen_professional_node (SUCESSO): {return_state}")
+        return return_state
     else:
         logger.warning(f"Escolha do profissional '{user_response_content}' não validada (nem por número, nem LLM, nem substring).")
         invalid_choice_prompt_str = """
@@ -953,11 +955,13 @@ def collect_validate_chosen_professional_node(state: MainWorkflowState, llm_clie
                 original_list_str=original_list_for_reprompt
                 )
         ).content.strip()
-        return {
-            "response_to_user": invalid_response,
+        return_state_failure = {
+            "response_to_user": invalid_response, # Certifique-se que invalid_response é só a mensagem de erro correta
             "scheduling_step": "VALIDATING_CHOSEN_PROFESSIONAL_FROM_LIST",
             "current_operation": "SCHEDULING"
         }
+        logger.debug(f"Retornando de collect_validate_chosen_professional_node (FALHA VALIDAÇÃO): {return_state_failure}")
+        return return_state_failure
 
 def collect_validate_chosen_date_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> dict:
     logger.debug("--- Nó Agendamento: collect_validate_chosen_date_node ---")
