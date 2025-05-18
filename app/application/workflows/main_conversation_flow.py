@@ -590,99 +590,99 @@ def solicitar_turno_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> di
         "current_operation": "SCHEDULING"
     }
 
-def coletar_validar_turno_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> dict:
-    logger.debug("--- Nó Agendamento: coletar_validar_turno_node ---")
-    user_response_content = get_last_user_message_content(state["messages"])
+# def coletar_validar_turno_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> dict:
+#     logger.debug("--- Nó Agendamento: coletar_validar_turno_node ---")
+#     user_response_content = get_last_user_message_content(state["messages"])
 
-    if not user_response_content:
-        logger.warning("Nenhuma resposta do usuário para coletar/validar o turno.")
-        return {
-            "response_to_user": "Não recebi sua preferência de turno. Manhã ou tarde?",
-            "scheduling_step": "VALIDATING_TURN_PREFERENCE",
-            "current_operation": "SCHEDULING"
-        }
+#     if not user_response_content:
+#         logger.warning("Nenhuma resposta do usuário para coletar/validar o turno.")
+#         return {
+#             "response_to_user": "Não recebi sua preferência de turno. Manhã ou tarde?",
+#             "scheduling_step": "VALIDATING_TURN_PREFERENCE",
+#             "current_operation": "SCHEDULING"
+#         }
 
-    logger.info(f"Resposta do usuário sobre turno: '{user_response_content}'")
+#     logger.info(f"Resposta do usuário sobre turno: '{user_response_content}'")
 
-    prompt_classificacao_turno_str = """
-    Analise a seguinte resposta do usuário, que foi perguntado se prefere o período da manhã ou da tarde para um agendamento.
-    Classifique a resposta em uma das seguintes categorias: "MANHA", "TARDE", ou "INVALIDO".
-    Considere variações comuns de escrita (com ou sem acento, maiúsculas/minúsculas) e normalize para a categoria correta.
+#     prompt_classificacao_turno_str = """
+#     Analise a seguinte resposta do usuário, que foi perguntado se prefere o período da manhã ou da tarde para um agendamento.
+#     Classifique a resposta em uma das seguintes categorias: "MANHA", "TARDE", ou "INVALIDO".
+#     Considere variações comuns de escrita (com ou sem acento, maiúsculas/minúsculas) e normalize para a categoria correta.
 
-    Exemplos:
-    - Usuário: "manhã" -> MANHA
-    - Usuário: "manha" -> MANHA
-    - Usuário: "Manhã" -> MANHA
-    - Usuário: "MANHA" -> MANHA
-    - Usuário: "de manhã, por favor" -> MANHA
-    - Usuário: "pela manhã" -> MANHA
-    - Usuário: "pode ser de tarde" -> TARDE
-    - Usuário: "tarde" -> TARDE
-    - Usuário: "Tarde" -> TARDE
-    - Usuário: "à tarde" -> TARDE
-    - Usuário: "no período da tarde" -> TARDE
-    - Usuário: "tanto faz" -> INVALIDO
-    - Usuário: "qualquer um" -> INVALIDO
-    - Usuário: "sim" -> INVALIDO
-    - Usuário: "gostaria" -> INVALIDO
-    - Usuário: "não sei" -> INVALIDO
+#     Exemplos:
+#     - Usuário: "manhã" -> MANHA
+#     - Usuário: "manha" -> MANHA
+#     - Usuário: "Manhã" -> MANHA
+#     - Usuário: "MANHA" -> MANHA
+#     - Usuário: "de manhã, por favor" -> MANHA
+#     - Usuário: "pela manhã" -> MANHA
+#     - Usuário: "pode ser de tarde" -> TARDE
+#     - Usuário: "tarde" -> TARDE
+#     - Usuário: "Tarde" -> TARDE
+#     - Usuário: "à tarde" -> TARDE
+#     - Usuário: "no período da tarde" -> TARDE
+#     - Usuário: "tanto faz" -> INVALIDO
+#     - Usuário: "qualquer um" -> INVALIDO
+#     - Usuário: "sim" -> INVALIDO
+#     - Usuário: "gostaria" -> INVALIDO
+#     - Usuário: "não sei" -> INVALIDO
 
-    Retorne APENAS a categoria ("MANHA", "TARDE", ou "INVALIDO").
+#     Retorne APENAS a categoria ("MANHA", "TARDE", ou "INVALIDO").
 
-    Resposta do usuário: "{user_response}"
-    Categoria:
-    """
-    prompt_template_turno = ChatPromptTemplate.from_template(prompt_classificacao_turno_str)
+#     Resposta do usuário: "{user_response}"
+#     Categoria:
+#     """
+#     prompt_template_turno = ChatPromptTemplate.from_template(prompt_classificacao_turno_str)
     
-    llm_classification_response_str = "INVALIDO" # Default
-    try:
-        chain_turno = prompt_template_turno | llm_client
-        llm_response = chain_turno.invoke({"user_response": user_response_content}).content.strip().upper()
-        logger.info(f"LLM classificou o turno como: '{llm_response}' para o input '{user_response_content}'")
-        if llm_response in ["MANHA", "TARDE"]:
-            llm_classification_response_str = llm_response
+#     llm_classification_response_str = "INVALIDO" # Default
+#     try:
+#         chain_turno = prompt_template_turno | llm_client
+#         llm_response = chain_turno.invoke({"user_response": user_response_content}).content.strip().upper()
+#         logger.info(f"LLM classificou o turno como: '{llm_response}' para o input '{user_response_content}'")
+#         if llm_response in ["MANHA", "TARDE"]:
+#             llm_classification_response_str = llm_response
 
-    except Exception as e:
-        logger.error(f"Erro ao invocar LLM para classificação de turno: {e}", exc_info=True)
+#     except Exception as e:
+#         logger.error(f"Erro ao invocar LLM para classificação de turno: {e}", exc_info=True)
 
-    normalized_user_response = user_response_content.strip().lower()
-    if llm_classification_response_str == "INVALIDO": 
-        if normalized_user_response == "manha" or "manhã" in normalized_user_response :
-            logger.info(f"Normalização manual/LLM fallback: '{user_response_content}' -> MANHA")
-            llm_classification_response_str = "MANHA"
-        elif normalized_user_response == "tarde" or "tarde" in normalized_user_response:
-            logger.info(f"Normalização manual/LLM fallback: '{user_response_content}' -> TARDE")
-            llm_classification_response_str = "TARDE"
+#     normalized_user_response = user_response_content.strip().lower()
+#     if llm_classification_response_str == "INVALIDO": 
+#         if normalized_user_response == "manha" or "manhã" in normalized_user_response :
+#             logger.info(f"Normalização manual/LLM fallback: '{user_response_content}' -> MANHA")
+#             llm_classification_response_str = "MANHA"
+#         elif normalized_user_response == "tarde" or "tarde" in normalized_user_response:
+#             logger.info(f"Normalização manual/LLM fallback: '{user_response_content}' -> TARDE")
+#             llm_classification_response_str = "TARDE"
 
-    if llm_classification_response_str == "MANHA":
-        return {
-            "user_chosen_turn": "MANHA",
-            "response_to_user": None,
-            "scheduling_step": "FETCHING_AVAILABLE_DATES",
-            "current_operation": "SCHEDULING"
-        }
-    elif llm_classification_response_str == "TARDE":
-        return {
-            "user_chosen_turn": "TARDE",
-            "response_to_user": None,
-            "scheduling_step": "FETCHING_AVAILABLE_DATES",
-            "current_operation": "SCHEDULING"
-        }
-    else: # Se ainda inválido após LLM e tentativa manual
-        logger.warning(f"LLM e normalização manual falharam em classificar o turno para input '{user_response_content}' (Classificação final: {llm_classification_response_str})")
-        professional_for_prompt = state.get("user_chosen_professional_name", f"um profissional de {state.get('user_chosen_specialty', 'a especialidade')}")
-        reprompt_messages = REQUEST_TURN_PREFERENCE_PROMPT_TEMPLATE.format_messages(
-            professional_name_or_specialty_based=professional_for_prompt
-        )
-        ai_reprompt_response = llm_client.invoke(reprompt_messages)
-        reprompt_text = "Desculpe, não entendi bem sua preferência de turno. " + ai_reprompt_response.content.strip()
+#     if llm_classification_response_str == "MANHA":
+#         return {
+#             "user_chosen_turn": "MANHA",
+#             "response_to_user": None,
+#             "scheduling_step": "FETCHING_AVAILABLE_DATES",
+#             "current_operation": "SCHEDULING"
+#         }
+#     elif llm_classification_response_str == "TARDE":
+#         return {
+#             "user_chosen_turn": "TARDE",
+#             "response_to_user": None,
+#             "scheduling_step": "FETCHING_AVAILABLE_DATES",
+#             "current_operation": "SCHEDULING"
+#         }
+#     else: # Se ainda inválido após LLM e tentativa manual
+#         logger.warning(f"LLM e normalização manual falharam em classificar o turno para input '{user_response_content}' (Classificação final: {llm_classification_response_str})")
+#         professional_for_prompt = state.get("user_chosen_professional_name", f"um profissional de {state.get('user_chosen_specialty', 'a especialidade')}")
+#         reprompt_messages = REQUEST_TURN_PREFERENCE_PROMPT_TEMPLATE.format_messages(
+#             professional_name_or_specialty_based=professional_for_prompt
+#         )
+#         ai_reprompt_response = llm_client.invoke(reprompt_messages)
+#         reprompt_text = "Desculpe, não entendi bem sua preferência de turno. " + ai_reprompt_response.content.strip()
 
-        return {
-            "response_to_user": reprompt_text,
-            "scheduling_step": "VALIDATING_TURN_PREFERENCE",
-            "current_operation": "SCHEDULING",
-            "user_chosen_turn": None
-        }
+#         return {
+#             "response_to_user": reprompt_text,
+#             "scheduling_step": "VALIDATING_TURN_PREFERENCE",
+#             "current_operation": "SCHEDULING",
+#             "user_chosen_turn": None
+#         }
 
 def list_available_professionals_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> dict:
     """
@@ -1836,6 +1836,14 @@ def route_after_processing_professional_logic(state: MainWorkflowState) -> str:
             logger.warning(f"route_after_processing_professional_logic: Condição não prevista. response_to_user: {response_for_user_is_set}, scheduling_step: {current_scheduling_step}. Indo para END como fallback.")
             return END
 
+def route_after_potential_user_prompt(state: MainWorkflowState) -> str:
+        if state.get("response_to_user"):
+            logger.info(f"Roteador (route_after_potential_user_prompt): 'response_to_user' está definido. Indo para END.")
+            return END
+        else:
+            logger.info(f"Roteador (route_after_potential_user_prompt): 'response_to_user' NÃO definido. Indo para 'route_scheduling_step' para continuar fluxo interno.")
+            return "route_scheduling_step"
+
 # === CONSTRUÇÃO DO GRAFO ===
 def get_main_conversation_graph_definition() -> StateGraph:
     logger.info("Definindo a estrutura do grafo principal da conversa (sem subgrafos)")
@@ -1862,6 +1870,8 @@ def get_main_conversation_graph_definition() -> StateGraph:
     workflow_builder.add_node("process_retry_option_choice_node", partial(process_retry_option_choice_node, llm_client=llm_instance))
     workflow_builder.add_node("coletar_validar_horario_escolhido_node", partial(coletar_validar_horario_escolhido_node, llm_client=llm_instance))
     workflow_builder.add_node("process_final_scheduling_confirmation_node", partial(process_final_scheduling_confirmation_node, llm_client=llm_instance))
+
+    workflow_builder.add_node("route_after_user_interaction", lambda state: state) 
 
 
     workflow_builder.set_entry_point("dispatcher")
@@ -1927,6 +1937,14 @@ def get_main_conversation_graph_definition() -> StateGraph:
             END: END
         }
     )
+    workflow_builder.add_conditional_edges(
+        "route_after_user_interaction",
+        route_after_potential_user_prompt, 
+        {
+            END: END,
+            "route_scheduling_step": "route_scheduling_step"
+        }
+    )
 
     # Saídas dos nós
     workflow_builder.add_edge("handle_greeting_farewell", END)
@@ -1937,11 +1955,11 @@ def get_main_conversation_graph_definition() -> StateGraph:
     workflow_builder.add_edge("solicitar_preferencia_profissional_node", END)
     workflow_builder.add_edge("coletar_classificar_preferencia_profissional_node", "route_scheduling_step")
     workflow_builder.add_edge("list_available_professionals_node", END)
-    workflow_builder.add_edge("collect_validate_chosen_professional_node", "route_scheduling_step") 
+    workflow_builder.add_edge("collect_validate_chosen_professional_node", "route_after_user_interaction") 
     workflow_builder.add_edge("solicitar_turno_node", END) 
-    workflow_builder.add_edge("coletar_validar_turno_node", "route_scheduling_step")
+    workflow_builder.add_edge("coletar_validar_turno_node", "route_after_user_interaction")
     workflow_builder.add_edge("fetch_and_present_available_dates_node", END)
-    workflow_builder.add_edge("collect_validate_chosen_date_node", "route_scheduling_step")
+    workflow_builder.add_edge("collect_validate_chosen_date_node", "route_after_user_interaction")
     workflow_builder.add_edge("fetch_and_present_available_times_node", END)
     workflow_builder.add_edge("coletar_validar_horario_escolhido_node", END)
     workflow_builder.add_edge("process_final_scheduling_confirmation_node", END)
