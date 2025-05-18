@@ -858,39 +858,88 @@ def collect_validate_chosen_professional_node(state: MainWorkflowState, llm_clie
             chosen_prof_id = selected.get("id")
             chosen_prof_name = selected.get("nome")
     except ValueError:
-        for prof_data in professionals_shown_list:
-            if prof_data.get("nome") and user_response_content.lower() in prof_data["nome"].lower():
-                if chosen_prof_id: 
-                    logger.warning(f"Escolha ambígua de profissional por nome: '{user_response_content}'")
-                    ambiguous_prompt = ChatPromptTemplate.from_template(
-                        "Você é um assistente de agendamento. O usuário {user_name} forneceu um nome de profissional '{user_input}' que é ambíguo na lista. "
-                        "Peça para ele ser mais específico ou usar o número da opção."
-                    ).format_messages(user_name=user_full_name, user_input=user_response_content)
-                    ambiguous_response = llm_client.invoke(ambiguous_prompt).content.strip()
-                    return {
-                        "response_to_user": ambiguous_response,
-                        "scheduling_step": "VALIDATING_CHOSEN_PROFESSIONAL_FROM_LIST"
-                    }
-                chosen_prof_id = prof_data.get("id")
-                chosen_prof_name = prof_data.get("nome")
+        cleaned_user_response = user_response_content.strip()
+        professional_names_from_api_list_str = ", ".join(
+            [p.get("nome", "") for p in professionals_shown_list if p.get("nome")]
+        )
+
+        if professional_names_from_api_list_str: 
+            try:
+                match_name_prompt_messages = MATCH_SPECIFIC_PROFESSIONAL_NAME_PROMPT_TEMPLATE.format_messages(
+                    user_typed_name=cleaned_user_response,
+                    professional_names_from_api_list_str=professional_names_from_api_list_str
+                )
+                llm_match_response = llm_client.invoke(match_name_prompt_messages)
+                matched_name_from_llm = llm_match_response.content.strip().strip('.').strip(',')
+                logger.info(f"LLM de correspondência de nome em collect_validate_chosen_professional_node sugeriu: '{matched_name_from_llm}' para a entrada '{cleaned_user_response}'")
+
+                if matched_name_from_llm != "NENHUMA_CORRESPONDENCIA" and matched_name_from_llm:
+                    for prof_data in professionals_shown_list:
+                        if prof_data.get("nome") and prof_data["nome"] == matched_name_from_llm:
+                            chosen_prof_id = prof_data.get("id")
+                            chosen_prof_name = prof_data.get("nome")
+                            logger.info(f"Profissional '{chosen_prof_name}' (ID: {chosen_prof_id}) selecionado via LLM match.")
+                            break 
+            except Exception as e:
+                logger.error(f"Erro ao invocar LLM para correspondência de nome em collect_validate_chosen_professional_node: {e}", exc_info=True)
+
+        if not (chosen_prof_id and chosen_prof_name):
+            potential_matches = []
+            for prof_data in professionals_shown_list:
+                if prof_data.get("nome") and cleaned_user_response.lower() in prof_data["nome"].lower():
+                    potential_matches.append(prof_data)
+            
+            if len(potential_matches) == 1:
+                chosen_prof_id = potential_matches[0].get("id")
+                chosen_prof_name = potential_matches[0].get("nome")
+                logger.info(f"Profissional '{chosen_prof_name}' (ID: {chosen_prof_id}) selecionado via substring match único.")
+            elif len(potential_matches) > 1:
+                logger.warning(f"Escolha ambígua de profissional por substring: '{cleaned_user_response}'. Candidatos: {[p.get('nome') for p in potential_matches]}")
+                ambiguous_prompt_str = """
+                Você é um assistente de agendamento. O usuário {user_name} forneceu uma entrada ('{user_input}')
+                que corresponde a mais de um profissional na lista.
+                Liste os profissionais que correspondem (até 3 para brevidade) e peça para ele ser mais específico ou usar o número da opção.
+                Profissionais correspondentes: {matched_names_list_str}
+                Sua resposta:
+                """
+                matched_names_for_prompt = ", ".join([p.get('nome') for p in potential_matches[:3]]) + ("..." if len(potential_matches) > 3 else "")
+                ambiguous_prompt = ChatPromptTemplate.from_template(ambiguous_prompt_str)
+                ambiguous_response = llm_client.invoke(
+                    ambiguous_prompt.format_messages(
+                        user_name=user_full_name, 
+                        user_input=cleaned_user_response,
+                        matched_names_list_str=matched_names_for_prompt
+                    )
+                ).content.strip()
+                return {
+                    "response_to_user": ambiguous_response,
+                    "scheduling_step": "VALIDATING_CHOSEN_PROFESSIONAL_FROM_LIST"
+                }
 
     if chosen_prof_id and chosen_prof_name:
         logger.info(f"Usuário escolheu o profissional: ID={chosen_prof_id}, Nome='{chosen_prof_name}'")
+        
+        next_question_prompt = REQUEST_TURN_PREFERENCE_PROMPT_TEMPLATE.format_messages(
+            professional_name_or_specialty_based=chosen_prof_name
+        )
+        next_question_response = llm_client.invoke(next_question_prompt)
+        response_text_for_user = next_question_response.content.strip()
+        
         return {
             "user_chosen_professional_id": chosen_prof_id,
             "user_chosen_professional_name": chosen_prof_name,
-            "response_to_user": None, 
-            "scheduling_step": "REQUESTING_TURN_PREFERENCE",
+            "response_to_user": response_text_for_user, 
+            "scheduling_step": "VALIDATING_TURN_PREFERENCE", 
             "current_operation": "SCHEDULING",
             "available_professionals_list": None 
         }
     else:
-        logger.warning(f"Escolha do profissional '{user_response_content}' não validada.")
+        logger.warning(f"Escolha do profissional '{user_response_content}' não validada (nem por número, nem LLM, nem substring).")
         invalid_choice_prompt_str = """
         Você é um assistente de agendamento. O usuário {user_name} fez uma escolha de profissional ('{user_input}') que não corresponde
-        a nenhuma das opções apresentadas anteriormente.
-        Reapresente as opções de forma concisa (sem listar tudo de novo, apenas lembre que ele precisa escolher da lista)
-        e peça para ele tentar novamente informando o nome completo ou o número da opção.
+        a nenhuma das opções apresentadas anteriormente ou não pôde ser claramente identificada.
+        Relembre-o que ele precisa escolher um profissional da lista que foi apresentada.
+        Peça para ele tentar novamente informando o nome completo do profissional ou o número da opção da lista.
         A lista original era: {original_list_str}
         Sua resposta:
         """
