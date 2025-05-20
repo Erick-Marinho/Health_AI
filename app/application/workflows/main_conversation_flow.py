@@ -743,7 +743,7 @@ def collect_validate_chosen_professional_node(state: MainWorkflowState, llm_clie
     Coleta a escolha do usuário da lista de profissionais apresentada e a valida.
     """
     logger.debug("--- Nó Agendamento: collect_validate_chosen_professional_node ---")
-    user_response_content = get_last_user_message_content(state["messages"])
+    user_response_content = get_last_user_message_content(state["messages"]).strip()
     
     professionals_shown_list = state.get("available_professionals_list", []) 
     user_full_name = state.get("user_full_name", "Paciente")
