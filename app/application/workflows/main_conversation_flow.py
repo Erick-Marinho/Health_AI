@@ -1263,6 +1263,18 @@ def check_cancellation_node(state: MainWorkflowState, llm_client: ChatOpenAI) ->
 
         if cancellation_intent == "SIM":
             logger.info(f"Intenção de cancelamento detectada para o usuário {state.get('user_full_name', '')}.")
+            user_phone_from_state = state.get("user_phone")
+
+            if user_phone_from_state:
+                n8n_webhook_url_cancel = f"https://n8n-server.apphealth.com.br/webhook/remove-tag?phone={user_phone_from_state}"
+                logger.info(f"Tentando chamar webhook N8N para remover tag (cancelamento): GET {n8n_webhook_url_cancel}")
+                try:
+                    response = requests.get(n8n_webhook_url_cancel, timeout=10)
+                    response.raise_for_status()
+                    logger.info(f"Webhook N8N para remover tag (cancelamento) retornou status {response.status_code}")
+                except Exception as e:
+                    logger.error(f"Erro ao chamar webhook N8N para remover tag (cancelamento): {e}")
+            
             return {
                 "response_to_user": "Entendido. O processo de agendamento foi cancelado. Se precisar de algo mais, é só chamar!",
                 "current_operation": None,
