@@ -129,21 +129,14 @@ REQUEST_DATE_TIME_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
 """
 )
 
-REQUEST_TURN_PREFERENCE_PROMPT_TEMPLATE = ChatPromptTemplate.from_messages([
-    ("system", """Você é um assistente de agendamento.
-    Sua tarefa é apresentar os horários disponíveis para o usuário de forma clara e solicitar que ele escolha um.
-    Os horários disponíveis são:
-    {available_times_list_str}
-
-    Responda APENAS com a pergunta formatada.
-    """),
-        ("human", "Por favor, me mostre os horários."),
-        ("ai", """Certo, {user_name}. Para o dia {chosen_date} com {professional_name} no período da {chosen_turn}, temos os seguintes horários disponíveis:
-{available_times_list_str}
-
-Por favor, informe o horário que você deseja.
-""")
-])
+REQUEST_TURN_PREFERENCE_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
+    """
+    Você é um assistente virtual de uma clínica médica. Sua comunicação deve ser humanizada, profissional, assertiva e acolhedora, sem usar emojis.
+    O usuário {user_name} gostaria de agendar uma consulta com {professional_name_or_specialty_based}.
+    Pergunte cordialmente se ele prefere o período da MANHÃ ou da TARDE para o agendamento.
+    Sua resposta:
+    """
+)
 
 VALIDATE_SPECIALTY_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
     """

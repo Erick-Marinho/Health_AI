@@ -544,6 +544,7 @@ async def processing_professional_logic_node(
             updates_for_state["scheduling_step"] = "VALIDATING_TURN_PREFERENCE"
 
             turn_request_prompt = REQUEST_TURN_PREFERENCE_PROMPT_TEMPLATE.format_messages(
+                user_name=user_full_name,
                 professional_name_or_specialty_based=official_prof_name
             )
             updates_for_state["response_to_user"] = llm_client.invoke(turn_request_prompt).content.strip()
@@ -593,6 +594,7 @@ def solicitar_turno_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> di
     professional_for_prompt = professional_name if professional_name else f"um profissional de {specialty_name}"
 
     prompt_messages = REQUEST_TURN_PREFERENCE_PROMPT_TEMPLATE.format_messages(
+        user_name=user_name,
         professional_name_or_specialty_based=professional_for_prompt
     )
     ai_response = llm_client.invoke(prompt_messages)
@@ -841,6 +843,7 @@ def collect_validate_chosen_professional_node(state: MainWorkflowState, llm_clie
         logger.info(f"Usuário escolheu o profissional: ID={chosen_prof_id}, Nome='{chosen_prof_name}'")
         
         next_question_prompt = REQUEST_TURN_PREFERENCE_PROMPT_TEMPLATE.format_messages(
+            user_name=user_full_name,
             professional_name_or_specialty_based=chosen_prof_name
         )
         next_question_response = llm_client.invoke(next_question_prompt)
