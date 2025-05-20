@@ -168,7 +168,7 @@ VALIDATE_SPECIALTY_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
     """
 )
 
-MATCH_OFFICIAL_SPECIALTY_PROMPT_TEMPLATE = ChatPromptTemplate.from_template( # NOVO PROMPT PARA MATCHING
+MATCH_OFFICIAL_SPECIALTY_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
     """
     Com base na especialidade informada/normalizada do usuário ({normalized_user_input_specialty}) e na lista oficial de especialidades médicas válidas abaixo, determine qual item da lista oficial melhor corresponde à entrada do usuário.
     Entrada do usuário (normalizada): "{normalized_user_input_specialty}"

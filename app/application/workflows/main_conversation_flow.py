@@ -1365,12 +1365,14 @@ def coletar_validar_turno_node(state: MainWorkflowState, llm_client: ChatOpenAI)
             }
         else: 
             logger.warning(f"LLM retornou categoria de turno não reconhecida ou inválida: '{llm_classification_response_str}'")
+            user_name_for_prompt = state.get("user_full_name", "você")
             professional_for_prompt = state.get("user_chosen_professional_name", f"um profissional de {state.get('user_chosen_specialty', 'a especialidade')}")
             reprompt_messages = REQUEST_TURN_PREFERENCE_PROMPT_TEMPLATE.format_messages(
+                user_name=user_name_for_prompt,
                 professional_name_or_specialty_based=professional_for_prompt
             )
             ai_reprompt_response = llm_client.invoke(reprompt_messages)
-            reprompt_text = "Desculpe, não entendi bem. " + ai_reprompt_response.content.strip()
+            reprompt_text = ai_reprompt_response.content.strip()
 
             return {
                 "response_to_user": reprompt_text,
