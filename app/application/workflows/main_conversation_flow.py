@@ -37,7 +37,8 @@ from app.application.prompts.conversation_prompts import (
     VALIDATE_FINAL_CONFIRMATION_PROMPT_TEMPLATE,
     EXTRACT_FULL_NAME_PROMPT_TEMPLATE,
     CHECK_CANCELLATION_PROMPT_TEMPLATE,
-    SCHEDULING_SUCCESS_MESSAGE_PROMPT_TEMPLATE
+    SCHEDULING_SUCCESS_MESSAGE_PROMPT_TEMPLATE,
+    VALIDATE_FALLBACK_CHOICE_PROMPT_TEMPLATE
 )
 from app.domain.models.user_profile import FullNameModel
 from app.infrastructure.llm_clients import get_llm_client
@@ -1306,6 +1307,164 @@ def check_cancellation_node(state: MainWorkflowState, llm_client: ChatOpenAI) ->
         logger.error(f"Erro ao verificar intenção de cancelamento com LLM: {e}", exc_info=True)
         return {"cancellation_check_result": "PROCEED_ λόγω_ERRO"}
 
+def process_fallback_choice_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> dict:
+    """
+    Processa a escolha do usuário após uma situação de fallback no agendamento, usando LLM para interpretação.
+    """
+    logger.debug(f"--- Nó: process_fallback_choice_node (LLM). Estado: {state} ---")
+    user_message_content = get_last_user_message_content(state.get("messages", []))
+    user_full_name = state.get("user_full_name", "Prezado(a) cliente")
+    previous_step = state.get("previous_scheduling_step")
+    
+    # Obter o texto da mensagem que o placeholder_fallback_node enviou (com as opções)
+    # Assumimos que a penúltima mensagem no estado é a AIMessage do placeholder_fallback_node
+    fallback_prompt_sent_to_user = ""
+    messages_history = state.get("messages", [])
+    if len(messages_history) >= 2 and isinstance(messages_history[-2], AIMessage):
+        fallback_prompt_sent_to_user = messages_history[-2].content
+    else:
+        logger.warning("Não foi possível recuperar o prompt de fallback original enviado ao usuário.")
+        # Como fallback, podemos tentar reconstruir uma descrição genérica, mas é menos ideal
+        fallback_prompt_sent_to_user = "O sistema apresentou opções para continuar após um erro."
+
+    updates = {
+        "response_to_user": None,
+        "scheduling_step": None,
+        "current_operation": "SCHEDULING",
+        "previous_scheduling_step": None 
+    }
+
+    if not user_message_content:
+        logger.warning("Nenhuma resposta do usuário para processar escolha de fallback.")
+        # Reutiliza a mensagem do placeholder_fallback_node se não houver resposta,
+        # mas isso requer que o placeholder_fallback_node seja chamado novamente.
+        # Por ora, uma mensagem genérica:
+        updates["response_to_user"] = "Não recebi sua escolha. Por favor, me diga o que gostaria de fazer em relação às opções apresentadas."
+        updates["scheduling_step"] = "AWAITING_FALLBACK_CHOICE"
+        return updates
+
+    # Determinar a descrição da etapa anterior e as opções textuais para o prompt do LLM
+    step_map = {
+        "VALIDATING_FULL_NAME": "confirmação do seu nome",
+        "VALIDATING_SPECIALTY": "escolha da especialidade",
+        "CLASSIFYING_PROFESSIONAL_PREFERENCE": "preferência de profissional",
+        "PROCESSING_PROFESSIONAL_LOGIC": "validação do profissional",
+        "LISTING_AVAILABLE_PROFESSIONALS": "busca por profissionais",
+        "VALIDATING_CHOSEN_PROFESSIONAL_FROM_LIST": "escolha do profissional da lista",
+        "VALIDATING_TURN_PREFERENCE": "escolha do turno",
+        "FETCHING_AVAILABLE_DATES": "busca por datas disponíveis",
+        "VALIDATING_CHOSEN_DATE": "confirmação da data",
+        "FETCHING_AVAILABLE_TIMES": "busca por horários",
+        "AWAITING_TIME_CHOICE": "escolha do horário",
+        "AWAITING_FINAL_CONFIRMATION": "confirmação final do agendamento"
+    }
+    previous_step_description = step_map.get(previous_step, "etapa anterior") if previous_step else "etapa anterior"
+
+    optional_go_to_specialty_text = ""
+    cancel_option_text_for_llm = ""
+    num_options_presented = 1 # Começa com "tentar novamente"
+    
+    if previous_step and previous_step not in ["VALIDATING_SPECIALTY", "VALIDATING_FULL_NAME"]:
+        num_options_presented +=1
+        optional_go_to_specialty_text = f"{num_options_presented}. Voltar para a escolha da especialidade."
+    
+    num_options_presented +=1
+    cancel_option_text_for_llm = f"{num_options_presented}. Cancelar o agendamento."
+
+
+    llm_classification = "AMBIGUOUS_OR_UNAFFILIATED" # Default
+    try:
+        prompt_llm = VALIDATE_FALLBACK_CHOICE_PROMPT_TEMPLATE.format_messages(
+            user_name=user_full_name,
+            fallback_prompt_text_with_options=fallback_prompt_sent_to_user,
+            user_response=user_message_content,
+            previous_step_description=previous_step_description,
+            optional_go_to_specialty_option_text=optional_go_to_specialty_text,
+            cancel_option_text=cancel_option_text_for_llm
+        )
+        logger.debug(f"Prompt para LLM de validação de fallback: {prompt_llm}")
+        llm_response_obj = llm_client.invoke(prompt_llm)
+        llm_classification = llm_response_obj.content.strip().upper()
+        logger.info(f"LLM classificou a escolha de fallback como: '{llm_classification}' para a entrada '{user_message_content}'")
+    except Exception as e:
+        logger.error(f"Erro ao invocar LLM para classificar escolha de fallback: {e}", exc_info=True)
+        # Em caso de erro do LLM, pode-se ter uma lógica de repetição simples ou ir para um estado de erro mais genérico.
+        # Por ora, manterá AMBIGUOUS_OR_UNAFFILIATED.
+    
+    if llm_classification == "RETRY_PREVIOUS_STEP" and previous_step:
+        logger.info(f"Usuário escolheu (via LLM) tentar novamente a etapa: '{previous_step}'.")
+        updates["scheduling_step"] = previous_step
+    elif llm_classification == "GO_TO_SPECIALTY" and (previous_step and previous_step not in ["VALIDATING_SPECIALTY", "VALIDATING_FULL_NAME"]):
+        logger.info("Usuário escolheu (via LLM) voltar para a escolha da especialidade.")
+        updates["user_chosen_specialty"] = None
+        updates["user_chosen_specialty_id"] = None
+        updates["professional_preference_type"] = None
+        # ... (resetar outros campos do estado como no exemplo anterior)
+        updates["user_provided_professional_name"] = None
+        updates["user_chosen_professional_id"] = None
+        updates["user_chosen_professional_name"] = None
+        updates["available_professionals_list"] = None
+        updates["user_chosen_turn"] = None
+        updates["available_dates_presented"] = None
+        updates["user_chosen_date"] = None
+        updates["available_times_presented"] = None
+        updates["user_chosen_time"] = None
+        updates["user_chosen_time_fim"] = None
+        updates["scheduling_step"] = "VALIDATING_SPECIALTY"
+    elif llm_classification == "CANCEL_SCHEDULING":
+        logger.info("Usuário escolheu (via LLM) cancelar o agendamento a partir do fallback.")
+        updates["response_to_user"] = f"Entendido, {user_full_name}. O processo de agendamento foi cancelado. Se precisar de algo mais, é só chamar!"
+        updates["current_operation"] = None 
+        updates["scheduling_step"] = None 
+        # ... (resetar estado de agendamento como no exemplo anterior)
+        updates["user_full_name"] = state.get("user_full_name") 
+        updates["user_phone"] = state.get("user_phone") 
+        updates["user_chosen_specialty"] = None
+        updates["user_chosen_specialty_id"] = None
+        updates["professional_preference_type"] = None
+        updates["user_provided_professional_name"] = None
+        updates["user_chosen_professional_id"] = None
+        updates["user_chosen_professional_name"] = None
+        updates["available_professionals_list"] = None
+        updates["user_chosen_turn"] = None
+        updates["available_dates_presented"] = None
+        updates["user_chosen_date"] = None
+        updates["available_times_presented"] = None
+        updates["user_chosen_time"] = None
+        updates["user_chosen_time_fim"] = None
+        updates["scheduling_completed"] = False
+        updates["scheduling_values_confirmed"] = None
+    else: # AMBIGUOUS_OR_UNAFFILIATED ou erro do LLM
+        logger.warning(f"Escolha de fallback ambígua ou não afiliada (LLM: '{llm_classification}') para '{user_message_content}'. Solicitando novamente.")
+        
+        # Reconstrói a mensagem de erro do placeholder_fallback_node para reprompt.
+        # Esta é a parte que idealmente rotearia de volta para placeholder_fallback_node.
+        # Por agora, vamos apenas construir a mensagem de reprompt.
+        error_response_text = f"Desculpe, {user_full_name}, não consegui entender sua escolha '{user_message_content}' claramente em relação às opções que apresentei.\n"
+        error_options_list_text = [] # Recriar a lista de opções textuais
+        
+        current_step_desc_reprompt = step_map.get(previous_step, "etapa anterior") if previous_step else "etapa anterior"
+        
+        option_counter = 1
+        error_options_list_text.append(f"{option_counter}. Tentar novamente a etapa de '{current_step_desc_reprompt}'.")
+        
+        if previous_step and previous_step not in ["VALIDATING_SPECIALTY", "VALIDATING_FULL_NAME"]:
+            option_counter += 1
+            error_options_list_text.append(f"{option_counter}. Voltar para a escolha da especialidade.")
+        
+        option_counter += 1
+        error_options_list_text.append(f"{option_counter}. Cancelar o agendamento.")
+        
+        error_response_text += "Poderia, por favor, escolher uma das seguintes opções (pode dizer o número ou descrever sua escolha):\n"
+        error_response_text += "\n".join(error_options_list_text)
+
+        updates["response_to_user"] = error_response_text
+        updates["scheduling_step"] = "AWAITING_FALLBACK_CHOICE" 
+        updates["previous_scheduling_step"] = previous_step # Mantém para a próxima tentativa
+
+    logger.info(f"Process fallback choice (LLM): Próximo passo definido como '{updates.get('scheduling_step')}'.")
+    return updates
+
 # === consultas api ===
 
 def coletar_validar_turno_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> dict:
@@ -1727,13 +1886,75 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
 
 # === consulta api ===
 
-# <<< ADICIONANDO AS FUNÇÕES DOS NÓS PLACEHOLDER >>>
-def placeholder_fallback_node(state: MainWorkflowState) -> dict:
-    """Placeholder para intenções fora do escopo ou não tratadas."""
-    logger.debug("--- Nó: placeholder_fallback_node ---")
-    categoria = state.get("categoria", "desconhecida")
-    response_text = f"Sua intenção foi '{categoria}'. No momento, estou aprendendo a lidar com essa solicitação. Posso ajudar com saudações ou com a criação de agendamentos por enquanto."
-    return {"response_to_user": response_text, "current_operation": None}
+# <<< ADICIONANDO AS FUNÇÕES DOS NÓS FALLBACK >>>
+def placeholder_fallback_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> dict:
+    """
+    Nó de fallback para lidar com erros não recuperáveis ou intenções não claras durante uma operação.
+    Oferece opções ao usuário para tentar novamente, mudar de rota ou cancelar.
+    """
+    logger.debug(f"--- Nó: placeholder_fallback_node. Estado atual: {state} ---")
+    user_full_name = state.get("user_full_name", "Prezado(a) cliente")
+    current_op = state.get("current_operation")
+    current_step = state.get("scheduling_step") 
+    fallback_custom_message = state.get("fallback_context_message")
+
+    if fallback_custom_message:
+        response_text = f"Desculpe, {user_full_name}, notei um problema: {fallback_custom_message}\n"
+    else:
+        response_text = f"Desculpe, {user_full_name}, tive dificuldades em processar sua última solicitação.\n"
+
+    options_list = []
+    updates_for_state = {
+        "fallback_context_message": None
+    }
+
+    if current_op == "SCHEDULING" and current_step:
+        step_map = {
+            "VALIDATING_FULL_NAME": "confirmação do seu nome",
+            "VALIDATING_SPECIALTY": "escolha da especialidade",
+            "CLASSIFYING_PROFESSIONAL_PREFERENCE": "preferência de profissional",
+            "PROCESSING_PROFESSIONAL_LOGIC": "validação do profissional",
+            "LISTING_AVAILABLE_PROFESSIONALS": "busca por profissionais",
+            "VALIDATING_CHOSEN_PROFESSIONAL_FROM_LIST": "escolha do profissional da lista",
+            "VALIDATING_TURN_PREFERENCE": "escolha do turno",
+            "FETCHING_AVAILABLE_DATES": "busca por datas disponíveis",
+            "VALIDATING_CHOSEN_DATE": "confirmação da data",
+            "FETCHING_AVAILABLE_TIMES": "busca por horários",
+            "AWAITING_TIME_CHOICE": "escolha do horário",
+            "AWAITING_FINAL_CONFIRMATION": "confirmação final do agendamento"
+        }
+        step_description = step_map.get(current_step, "etapa atual")
+        
+        response_text += f"Estávamos na etapa de '{step_description}'.\n"
+        response_text += "O que você gostaria de fazer?\n"
+        
+        options_list.append(f"1. Tentar novamente a etapa de '{step_description}'.")
+        updates_for_state["previous_scheduling_step"] = current_step
+
+        if current_step not in ["VALIDATING_SPECIALTY", "VALIDATING_FULL_NAME"]:
+            options_list.append("2. Voltar para a escolha da especialidade.")
+        options_list.append(f"{len(options_list) + 1}. Cancelar o agendamento.")
+
+        updates_for_state["scheduling_step"] = "AWAITING_FALLBACK_CHOICE"
+        updates_for_state["current_operation"] = "SCHEDULING"
+    
+    else:
+        last_user_message = get_last_user_message_content(state.get("messages", []))
+        if last_user_message:
+            response_text += f"Não consegui entender bem '{last_user_message}'. "
+        response_text += "Poderia, por favor, reformular sua solicitação ou me dizer como posso te ajudar agora (ex: 'quero fazer um agendamento')?"
+        updates_for_state["current_operation"] = None
+        updates_for_state["scheduling_step"] = None
+        updates_for_state["categoria"] = "Indefinido" 
+        updates_for_state["previous_scheduling_step"] = None
+
+    if options_list:
+        response_text += "\n".join(options_list)
+        response_text += "\nPor favor, digite o número da opção desejada."
+
+    updates_for_state["response_to_user"] = response_text
+    logger.info(f"Placeholder fallback: Próximo passo definido como '{updates_for_state.get('scheduling_step')}'. Mensagem: '{response_text}'")
+    return updates_for_state
 
 # === NOVO NÓ DISPATCHER ===
 def dispatcher_node(state: MainWorkflowState) -> dict:
@@ -1831,6 +2052,8 @@ def route_scheduling_step(state: MainWorkflowState) -> str:
         return "process_final_scheduling_confirmation_node"
     elif step == "AWAITING_RETRY_OPTION_AFTER_NO_AVAILABILITY":
         return "process_retry_option_choice_node"
+    elif step == "INITIATE_FALLBACK":
+        return "placeholder_fallback_node"
     
     logger.warning(f"Roteamento do Agendamento: Passo desconhecido ou não manuseado '{step}'. Finalizando o fluxo de agendamento.")
     return END
@@ -1869,6 +2092,24 @@ def route_after_potential_user_prompt(state: MainWorkflowState) -> str:
             logger.info(f"Roteador (route_after_potential_user_prompt): 'response_to_user' NÃO definido. Indo para 'route_scheduling_step' para continuar fluxo interno.")
             return "route_scheduling_step"
 
+def route_after_fallback_choice(state: MainWorkflowState) -> str:
+    """
+    Roteia após o usuário ter feito uma escolha no nó de fallback.
+    """
+    logger.info(f"Roteamento após escolha de fallback. Estado: {state}")
+    next_scheduling_step = state.get("scheduling_step")
+    response_to_user = state.get("response_to_user")
+
+    if response_to_user: 
+        logger.info(f"Roteamento após fallback: response_to_user definido. Indo para END para enviar mensagem.")
+        return END
+    elif next_scheduling_step:
+        logger.info(f"Roteamento após fallback: próximo passo é '{next_scheduling_step}'. Indo para route_scheduling_step.")
+        return "route_scheduling_step"
+    else:
+        logger.warning("Roteamento após fallback: Nenhuma resposta ao usuário e nenhum próximo passo. Fluxo de cancelamento pode estar incompleto. Indo para END.")
+        return END
+
 # === CONSTRUÇÃO DO GRAFO ===
 def get_main_conversation_graph_definition() -> StateGraph:
     logger.info("Definindo a estrutura do grafo principal da conversa (sem subgrafos)")
@@ -1878,7 +2119,7 @@ def get_main_conversation_graph_definition() -> StateGraph:
     workflow_builder.add_node("dispatcher", dispatcher_node)
     workflow_builder.add_node("categorize_intent", partial(categorize_node, llm_client=llm_instance))
     workflow_builder.add_node("handle_greeting_farewell", partial(greeting_farewell_node, llm_client=llm_instance))
-    workflow_builder.add_node("handle_fallback_placeholder", placeholder_fallback_node)
+    workflow_builder.add_node("placeholder_fallback_node", partial(placeholder_fallback_node, llm_client=llm_instance))
     workflow_builder.add_node("solicitar_nome_agendamento_node", partial(solicitar_nome_agendamento_node, llm_client=llm_instance))
     workflow_builder.add_node("coletar_validar_nome_agendamento_node", partial(coletar_validar_nome_agendamento_node, llm_client=llm_instance))
     workflow_builder.add_node("coletar_validar_especialidade_node", partial(coletar_validar_especialidade_node, llm_client=llm_instance)) 
@@ -1895,10 +2136,10 @@ def get_main_conversation_graph_definition() -> StateGraph:
     workflow_builder.add_node("process_retry_option_choice_node", partial(process_retry_option_choice_node, llm_client=llm_instance))
     workflow_builder.add_node("coletar_validar_horario_escolhido_node", partial(coletar_validar_horario_escolhido_node, llm_client=llm_instance))
     workflow_builder.add_node("process_final_scheduling_confirmation_node", partial(process_final_scheduling_confirmation_node, llm_client=llm_instance))
-
     workflow_builder.add_node("route_after_user_interaction", lambda state: state) 
     workflow_builder.add_node("check_cancellation_node", partial(check_cancellation_node, llm_client=llm_instance))
-
+    workflow_builder.add_node("process_final_scheduling_confirmation_node", partial(process_final_scheduling_confirmation_node, llm_client=llm_instance))
+    workflow_builder.add_node("process_fallback_choice_node", partial(process_fallback_choice_node, llm_client=llm_instance))
 
     workflow_builder.set_entry_point("dispatcher")
 
@@ -1927,7 +2168,7 @@ def get_main_conversation_graph_definition() -> StateGraph:
         {
             "handle_greeting_farewell": "handle_greeting_farewell",
             "solicitar_nome_agendamento_node": "solicitar_nome_agendamento_node", 
-            "handle_fallback_placeholder": "handle_fallback_placeholder"
+            "handle_fallback_placeholder": "placeholder_fallback_node"
         }
     )
     
@@ -1952,6 +2193,8 @@ def get_main_conversation_graph_definition() -> StateGraph:
             "fetch_and_present_available_times_node": "fetch_and_present_available_times_node",
             "coletar_validar_horario_escolhido_node": "coletar_validar_horario_escolhido_node",
             "process_final_scheduling_confirmation_node": "process_final_scheduling_confirmation_node",
+            "process_fallback_choice_node": "process_fallback_choice_node",
+            "placeholder_fallback_node": "placeholder_fallback_node",
             END: END 
         }
     )
@@ -1982,12 +2225,21 @@ def get_main_conversation_graph_definition() -> StateGraph:
         }
     )
 
+    workflow_builder.add_conditional_edges(
+        "process_fallback_choice_node",
+        route_after_fallback_choice,
+        {
+            END: END, 
+            "route_scheduling_step": "route_scheduling_step"
+        }
+    )
+
     # Saídas dos nós
     workflow_builder.add_edge("handle_greeting_farewell", END)
     workflow_builder.add_edge("handle_fallback_placeholder", END)
     workflow_builder.add_edge("solicitar_nome_agendamento_node", END) 
-    workflow_builder.add_edge("coletar_validar_nome_agendamento_node", END)
-    workflow_builder.add_edge("coletar_validar_especialidade_node", END)
+    workflow_builder.add_edge("coletar_validar_nome_agendamento_node", "route_after_user_interaction")
+    workflow_builder.add_edge("coletar_validar_especialidade_node","route_after_user_interaction")
     workflow_builder.add_edge("solicitar_preferencia_profissional_node", END)
     workflow_builder.add_edge("coletar_classificar_preferencia_profissional_node", "route_scheduling_step")
     workflow_builder.add_edge("list_available_professionals_node", END)
@@ -1999,6 +2251,7 @@ def get_main_conversation_graph_definition() -> StateGraph:
     workflow_builder.add_edge("fetch_and_present_available_times_node", END)
     workflow_builder.add_edge("coletar_validar_horario_escolhido_node", END)
     workflow_builder.add_edge("process_final_scheduling_confirmation_node", END)
+    workflow_builder.add_edge("placeholder_fallback_node", END) 
     return workflow_builder
 
 # === FUNÇÃO DE EXECUÇÃO DO FLUXO ===

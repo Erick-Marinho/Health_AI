@@ -32,3 +32,6 @@ class MainWorkflowState(TypedDict, total=False):
 
     scheduling_completed: bool
     scheduling_values_confirmed: Optional[Dict]
+
+    previous_scheduling_step: Optional[str] = None
+    fallback_context_message: Optional[str] = None

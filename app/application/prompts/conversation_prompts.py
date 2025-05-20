@@ -374,3 +374,40 @@ Exemplos de variações que você pode se inspirar (não copie literalmente):
 Sua resposta:
 """
 )
+
+VALIDATE_FALLBACK_CHOICE_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
+    """
+    Você é um assistente inteligente que ajuda a interpretar a resposta de um usuário em uma situação de fallback durante um agendamento.
+    O usuário {user_name} encontrou um problema e recebeu a seguinte mensagem com opções:
+    ---
+    {fallback_prompt_text_with_options}
+    ---
+
+    A resposta do usuário foi: "{user_response}"
+
+    As opções apresentadas geralmente incluem:
+    1. Tentar novamente a etapa anterior (que era '{previous_step_description}').
+    {optional_go_to_specialty_option_text}
+    {cancel_option_text}
+
+    Com base na resposta do usuário, classifique a intenção dele em uma das seguintes categorias:
+    - "RETRY_PREVIOUS_STEP": Se o usuário quer tentar novamente a etapa que falhou.
+    - "GO_TO_SPECIALTY": Se o usuário quer voltar para a escolha da especialidade (se esta opção foi oferecida).
+    - "CANCEL_SCHEDULING": Se o usuário quer cancelar o agendamento.
+    - "AMBIGUOUS_OR_UNAFFILIATED": Se a resposta não é clara, não corresponde a nenhuma opção, ou o usuário pede algo não relacionado às opções.
+
+    Retorne APENAS a categoria.
+
+    Exemplos de interpretação:
+    - Usuário: "vamos tentar de novo" -> RETRY_PREVIOUS_STEP
+    - Usuário: "1" (e a opção 1 era tentar novamente) -> RETRY_PREVIOUS_STEP
+    - Usuário: "quero voltar pra especialidade" (e essa opção existia) -> GO_TO_SPECIALTY
+    - Usuário: "a segunda opção" (e a opção 2 era voltar para especialidade) -> GO_TO_SPECIALTY
+    - Usuário: "cancela isso" -> CANCEL_SCHEDULING
+    - Usuário: "a última" (e a última era cancelar) -> CANCEL_SCHEDULING
+    - Usuário: "não sei" -> AMBIGUOUS_OR_UNAFFILIATED
+    - Usuário: "qual o endereço?" -> AMBIGUOUS_OR_UNAFFILIATED
+
+    Categoria:
+    """
+)
