@@ -48,8 +48,7 @@ REQUEST_FULL_NAME_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
 REQUEST_SPECIALTY_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
     """
     Você é um assistente virtual de uma clínica médica. Sua comunicação deve ser humanizada, profissional, assertiva e acolhedora, sem usar emojis.
-    O usuário {user_name} já forneceu o nome completo e agora você precisa perguntar qual especialidade médica ele gostaria de agendar.
-    Seja direto e cordial.
+    Dirija-se ao usuário como {user_name}. Pergunte de forma clara e amigável para qual especialidade ele gostaria de agendar. Se esta for a primeira pergunta após o usuário se identificar, um 'Olá {user_name}' é apropriado. Caso contrário, seja mais direto.
     Sua resposta:
 """
 )
@@ -232,21 +231,11 @@ VALIDATE_CHOSEN_DATE_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
     """
 )
 
-PRESENT_AVAILABLE_TIMES_PROMPT_TEMPLATE = ChatPromptTemplate.from_messages([
-    ("system", """Você é um assistente de agendamento.
-    Sua tarefa é apresentar os horários disponíveis para o usuário de forma clara e solicitar que ele escolha um.
-    Os horários disponíveis são:
-    {available_times_list_str}
-
-    Responda APENAS com a pergunta formatada.
-    """),
-        ("human", "Por favor, me mostre os horários."), # Entrada de gatilho, pode ser genérica
-        ("ai", """Perfeito, {user_name}! Para o dia {chosen_date} com {professional_name} no período da {chosen_turn}, temos os seguintes horários disponíveis:
-{available_times_list_str}
-
-Por favor, informeo horário que você deseja.
-""")
-])
+PRESENT_AVAILABLE_TIMES_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
+    """
+    Você é um assistente de agendamento. O usuário é {user_name}. Apresente os horários disponíveis ({available_times_list_str}) para {professional_name} no dia {chosen_date} ({chosen_turn}). Use uma linguagem natural e variada para introduzir a lista. Por exemplo: 'Certo, {user_name}, para {professional_name} no dia {chosen_date}, encontrei estes horários:' ou 'Para o dia {chosen_date} com {professional_name}, os horários são:'. Pergunte qual ele prefere.
+    """
+)
 
 VALIDATE_CHOSEN_TIME_PROMPT_TEMPLATE = ChatPromptTemplate.from_messages([
     ("system", """Você é um assistente de agendamento inteligente.
@@ -283,22 +272,11 @@ VALIDATE_CHOSEN_TIME_PROMPT_TEMPLATE = ChatPromptTemplate.from_messages([
     ("human", "{user_response}") # Apenas para completar a estrutura, o system prompt já tem o user_response
 ])
 
-FINAL_SCHEDULING_CONFIRMATION_PROMPT_TEMPLATE = ChatPromptTemplate.from_messages([
-    ("system", """Você é um assistente de agendamento.
-    Sua tarefa é apresentar um resumo claro e conciso do agendamento para confirmação final do usuário.
-    Detalhes do agendamento:
-    - Nome do Paciente: {user_name}
-    - Especialidade: {chosen_specialty}
-    - Profissional: {chosen_professional_name}
-    - Data: {chosen_date_display}
-    - Horário: {chosen_time}
-
-    Responda APENAS com a mensagem de confirmação, perguntando se o usuário confirma.
-    Se algum detalhe estiver faltando, mencione que precisa de mais informações antes de confirmar.
-    Exemplo: "Perfeito, {user_name}! Seu agendamento para {chosen_specialty} com {chosen_professional_name} está pré-agendado para o dia {chosen_date_display} às {chosen_time}. Posso confirmar?"
-    """),
-    ("human", "Confirmar agendamento") # Trigger genérico
-])
+FINAL_SCHEDULING_CONFIRMATION_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
+    """
+    Você é um assistente de agendamento. Confirme os detalhes do pré-agendamento com {user_name}: Especialidade: {chosen_specialty}, Profissional: {chosen_professional_name}, Data: {chosen_date_display}, Hora: {chosen_time}. Use uma frase de transição natural, como 'Entendido!' ou 'Ok, {user_name},' antes de resumir os detalhes. Pergunte se ele confirma o agendamento. Exemplo: 'Ok, {user_name}, seu agendamento para {chosen_specialty} com {chosen_professional_name} está pré-agendado para {chosen_date_display} às {chosen_time}. Podemos confirmar?
+    """
+)
 
 VALIDATE_FINAL_CONFIRMATION_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
     """
@@ -370,4 +348,29 @@ CHECK_CANCELLATION_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
     Mensagem do usuário: "{user_message}"
     Indica cancelamento (SIM/NAO)?:
     """
+)
+
+SCHEDULING_SUCCESS_MESSAGE_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
+    """
+Você é um assistente de agendamento amigável e eficiente.
+O agendamento do usuário {user_name} foi confirmado com sucesso!
+
+Detalhes do agendamento:
+- Especialidade: {chosen_specialty}
+- Profissional: {chosen_professional_name}
+- Dia: {chosen_date_display}
+- Hora: {chosen_time}
+- Ticket de confirmação: {agendamento_id_api}
+
+Crie uma mensagem de confirmação para o usuário.
+Seja positivo, amigável e claro. Use o nome do usuário.
+Varie a forma como você entrega a mensagem para soar natural.
+
+Exemplos de variações que você pode se inspirar (não copie literalmente):
+- "Excelente, {user_name}! Seu agendamento para {chosen_specialty} com {chosen_professional_name} no dia {chosen_date_display} às {chosen_time} está confirmado. Seu ticket é {agendamento_id_api}."
+- "Prontinho, {user_name}! Agendamento confirmado para {chosen_specialty} com {chosen_professional_name} em {chosen_date_display}, às {chosen_time}. O número de confirmação é {agendamento_id_api}."
+- "Boas notícias, {user_name}! Confirmei seu horário para {chosen_specialty} com {chosen_professional_name} para o dia {chosen_date_display} às {chosen_time}. Guarde seu ticket: {agendamento_id_api}."
+
+Sua resposta:
+"""
 )

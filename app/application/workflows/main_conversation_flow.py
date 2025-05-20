@@ -36,7 +36,8 @@ from app.application.prompts.conversation_prompts import (
     FINAL_SCHEDULING_CONFIRMATION_PROMPT_TEMPLATE,
     VALIDATE_FINAL_CONFIRMATION_PROMPT_TEMPLATE,
     EXTRACT_FULL_NAME_PROMPT_TEMPLATE,
-    CHECK_CANCELLATION_PROMPT_TEMPLATE
+    CHECK_CANCELLATION_PROMPT_TEMPLATE,
+    SCHEDULING_SUCCESS_MESSAGE_PROMPT_TEMPLATE
 )
 from app.domain.models.user_profile import FullNameModel
 from app.infrastructure.llm_clients import get_llm_client
@@ -1653,10 +1654,26 @@ def process_final_scheduling_confirmation_node(state: MainWorkflowState, llm_cli
                 chosen_professional_name = state.get("user_chosen_professional_name", "N/A")
                 chosen_date_display = datetime.strptime(data_agendamento, "%Y-%m-%d").strftime("%d/%m/%Y") if data_agendamento else "N/A"
                 
-                success_message = (
-                    f"Ótimo, {user_full_name}! Seu agendamento para {chosen_specialty} com {chosen_professional_name} "
-                    f"no dia {chosen_date_display} às {hora_inicio_hhmm_str} foi confirmado com sucesso (Ticket de confirmação: {agendamento_id_api}). "
-                )
+                try:
+                    success_prompt_messages = SCHEDULING_SUCCESS_MESSAGE_PROMPT_TEMPLATE.format_messages(
+                        user_name=user_full_name,
+                        chosen_specialty=chosen_specialty,
+                        chosen_professional_name=chosen_professional_name,
+                        chosen_date_display=chosen_date_display,
+                        chosen_time=hora_inicio_hhmm_str,
+                        agendamento_id_api=agendamento_id_api
+                    )
+                    success_response_llm = llm_client.invoke(success_prompt_messages)
+                    success_message = success_response_llm.content.strip()
+                    logger.info(f"Mensagem de sucesso gerada pelo LLM: '{success_message}'")
+                
+                except Exception as e_prompt:
+                    logger.error(f"Erro ao gerar mensagem de sucesso com LLM: {e_prompt}. Usando fallback.")
+                    success_message = (
+                        f"Ótimo, {user_full_name}! Seu agendamento para {chosen_specialty} com {chosen_professional_name} "
+                        f"no dia {chosen_date_display} às {hora_inicio_hhmm_str} foi confirmado com sucesso (Ticket de confirmação: {agendamento_id_api}). "
+                    )
+                
                 return {
                     "response_to_user": success_message, "scheduling_completed": True,
                     "current_operation": None, "scheduling_step": None, 
