@@ -190,34 +190,6 @@ def coletar_validar_especialidade_node(state: MainWorkflowState, llm_client: Cha
         logger.warning("Nenhuma mensagem do usuário para validar especialidade.")
         return {
             "response_to_user": "Por favor, informe a especialidade médica desejada.",
-            "scheduling_step": "VALIDATING_SPECIALTY", 
-            "user_chosen_specialty": None,
-            "user_chosen_specialty_id": None
-        }
-
-    
-    prompt_validate_specialty_messages = VALIDATE_SPECIALTY_PROMPT_TEMPLATE.format_messages(
-        user_input_specialty=last_user_message 
-    )
-    try:
-        validated_specialty_response = llm_client.invoke(prompt_validate_specialty_messages)
-        cleaned_specialty_name = validated_specialty_response.content.strip()
-        logger.info(f"Resultado da validação/normalização da especialidade: '{cleaned_specialty_name}' para entrada '{last_user_message}'")
-
-        if cleaned_specialty_name == "ENTRADA_INVALIDA_NAO_EH_ESPECIALIDADE":
-            logger.info(f"Entrada '{last_user_message}' não foi considerada uma especialidade válida pelo LLM inicial.")
-            
-            return {
-                "response_to_user": f"Desculpe, não entendi '{last_user_message}' como uma especialidade médica. Poderia tentar informar novamente? Por exemplo: Cardiologia, Ortopedia, etc.",
-                "scheduling_step": "VALIDATING_SPECIALTY",
-                "user_chosen_specialty": None,
-                "user_chosen_specialty_id": None
-            }
-
-    except Exception as e:
-        logger.error(f"Erro ao invocar LLM para validar/normalizar especialidade: {e}")
-        return {
-            "response_to_user": "Desculpe, tive um problema ao tentar entender a especialidade. Poderia tentar novamente?",
             "scheduling_step": "VALIDATING_SPECIALTY",
             "user_chosen_specialty": None,
             "user_chosen_specialty_id": None
@@ -229,39 +201,82 @@ def coletar_validar_especialidade_node(state: MainWorkflowState, llm_client: Cha
         "Content-Type": "application/json"
     }
     url_especialidades_todas = "https://back.homologacao.apphealth.com.br:9090/api-vizi/especialidades"
-    
+    especialidades_api_list = []
+    nomes_especialidades_oficiais = []
+
     try:
         response = requests.get(url_especialidades_todas, headers=api_headers, timeout=10)
         response.raise_for_status()
         especialidades_api_list = response.json()
-        
+
         if not especialidades_api_list or not isinstance(especialidades_api_list, list):
             logger.warning(f"API de especialidades ({url_especialidades_todas}) retornou dados vazios ou em formato inesperado.")
             return {
                 "response_to_user": "Desculpe, estou com dificuldades para carregar a lista de especialidades no momento. Por favor, tente mais tarde.",
                 "scheduling_step": "VALIDATING_SPECIALTY",
-                "user_chosen_specialty": cleaned_specialty_name,
+                "user_chosen_specialty": None,
                 "user_chosen_specialty_id": None
             }
-            
+
+        nomes_especialidades_oficiais = [
+            item["especialidade"] for item in especialidades_api_list if "especialidade" in item and isinstance(item.get("especialidade"), str)
+        ]
+        if not nomes_especialidades_oficiais:
+            logger.warning("Não foi possível extrair nomes de especialidades válidos da resposta da API.")
+            return {
+                "response_to_user": "Parece que nossa lista de especialidades está temporariamente indisponível. Por favor, tente mais tarde.",
+                "scheduling_step": "VALIDATING_SPECIALTY",
+                "user_chosen_specialty": None,
+                "user_chosen_specialty_id": None
+            }
+
     except requests.exceptions.RequestException as e:
         logger.error(f"Erro ao buscar todas as especialidades da API ({url_especialidades_todas}): {e}")
         return {
             "response_to_user": "Desculpe, estou com dificuldades para acessar nossas especialidades no momento. Por favor, tente novamente em alguns instantes.",
             "scheduling_step": "VALIDATING_SPECIALTY",
-            "user_chosen_specialty": cleaned_specialty_name,
+            "user_chosen_specialty": None,
             "user_chosen_specialty_id": None
         }
 
-    nomes_especialidades_oficiais = [
-        item["especialidade"] for item in especialidades_api_list if "especialidade" in item and isinstance(item.get("especialidade"), str)
-    ]
-    if not nomes_especialidades_oficiais:
-        logger.warning("Não foi possível extrair nomes de especialidades válidos da resposta da API.")
+    prompt_validate_specialty_messages = VALIDATE_SPECIALTY_PROMPT_TEMPLATE.format_messages(
+        user_input_specialty=last_user_message
+    )
+    cleaned_specialty_name = ""
+    try:
+        validated_specialty_response = llm_client.invoke(prompt_validate_specialty_messages)
+        cleaned_specialty_name = validated_specialty_response.content.strip()
+        logger.info(f"Resultado da validação/classificação da entrada de especialidade: '{cleaned_specialty_name}' para entrada '{last_user_message}'")
+
+    except Exception as e:
+        logger.error(f"Erro ao invocar LLM para validar/classificar entrada de especialidade: {e}")
         return {
-            "response_to_user": "Parece que nossa lista de especialidades está temporariamente indisponível. Por favor, tente mais tarde.",
+            "response_to_user": "Desculpe, tive um problema ao tentar entender sua solicitação sobre a especialidade. Poderia tentar novamente?",
             "scheduling_step": "VALIDATING_SPECIALTY",
-            "user_chosen_specialty": cleaned_specialty_name,
+            "user_chosen_specialty": None,
+            "user_chosen_specialty_id": None
+        }
+
+    if cleaned_specialty_name == "LISTAR_ESPECIALIDADES":
+        logger.info(f"Usuário '{user_full_name}' solicitou a listagem de especialidades.")
+        available_specialties_str = "\n".join([f"- {esp}" for esp in nomes_especialidades_oficiais[:15]]) # Mostra até 15
+        response_text = (
+            f"Claro, {user_full_name}! Atualmente, trabalhamos com as seguintes especialidades:\n{available_specialties_str}\n"
+            "Por favor, escolha uma da lista ou, se preferir, pode digitar 'cancelar'."
+        )
+        return {
+            "response_to_user": response_text,
+            "scheduling_step": "VALIDATING_SPECIALTY",
+            "user_chosen_specialty": None,
+            "user_chosen_specialty_id": None
+        }
+
+    if cleaned_specialty_name == "ENTRADA_INVALIDA_NAO_EH_ESPECIALIDADE":
+        logger.info(f"Entrada '{last_user_message}' não foi considerada uma especialidade válida nem uma solicitação de listagem.")
+        return {
+            "response_to_user": f"Desculpe, não entendi '{last_user_message}' como uma especialidade médica. Poderia tentar informar novamente? Por exemplo: Cardiologia, Ortopedia, etc. Se desejar ver a lista de especialidades, pode perguntar 'quais especialidades vocês têm?'.",
+            "scheduling_step": "VALIDATING_SPECIALTY",
+            "user_chosen_specialty": None,
             "user_chosen_specialty_id": None
         }
 
@@ -269,7 +284,7 @@ def coletar_validar_especialidade_node(state: MainWorkflowState, llm_client: Cha
         normalized_user_input_specialty=cleaned_specialty_name,
         official_specialties_list_str=", ".join(nomes_especialidades_oficiais)
     )
-    
+
     try:
         match_response = llm_client.invoke(prompt_match_specialty_messages)
         nome_especialidade_llm_match = match_response.content.strip()
@@ -290,7 +305,7 @@ def coletar_validar_especialidade_node(state: MainWorkflowState, llm_client: Cha
                 specialty_id_found = item["id"]
                 official_specialty_name = item["especialidade"]
                 logger.info(f"Sucesso! Entrada original '{last_user_message}' (normalizada para '{cleaned_specialty_name}') correspondeu a '{official_specialty_name}' (ID: {specialty_id_found}).")
-                
+
                 next_question_prompt = REQUEST_PROFESSIONAL_PREFERENCE_PROMPT_TEMPLATE.format_messages(
                     user_name=user_full_name,
                     user_specialty=official_specialty_name
@@ -305,22 +320,21 @@ def coletar_validar_especialidade_node(state: MainWorkflowState, llm_client: Cha
                     "user_chosen_specialty_id": specialty_id_found,
                     "error_message": None
                 }
-        
-        logger.warning(f"Especialidade '{nome_especialidade_llm_match}' sugerida pelo LLM de correspondência não foi encontrada na lista original da API (isso pode indicar um problema no prompt de match ou na lista).")
-        
-        
+
+        logger.warning(f"Especialidade '{nome_especialidade_llm_match}' sugerida pelo LLM de correspondência não foi encontrada na lista original da API.")
+
     logger.info(f"Nenhuma correspondência oficial encontrada para '{cleaned_specialty_name}' (entrada original: '{last_user_message}').")
-    
-    available_specialties_str = "\n".join([f"- {esp}" for esp in nomes_especialidades_oficiais[:10]]) 
-    response_text = (
+
+    available_specialties_str_fallback = "\n".join([f"- {esp}" for esp in nomes_especialidades_oficiais[:10]])
+    response_text_fallback = (
         f"Desculpe, {user_full_name}, não consegui encontrar a especialidade '{cleaned_specialty_name}' em nossa lista, ou ela não está disponível no momento.\n"
-        f"Atualmente, trabalhamos com as seguintes especialidades:\n{available_specialties_str}\n"
+        f"Atualmente, trabalhamos com as seguintes especialidades:\n{available_specialties_str_fallback}\n"
         "Por favor, escolha uma da lista ou, se preferir, pode digitar 'cancelar'."
     )
     return {
-        "response_to_user": response_text,
+        "response_to_user": response_text_fallback,
         "scheduling_step": "VALIDATING_SPECIALTY",
-        "user_chosen_specialty": None,
+        "user_chosen_specialty": None, # Limpa a tentativa anterior se não houve match oficial
         "user_chosen_specialty_id": None,
         "error_message": f"Especialidade '{cleaned_specialty_name}' (original: '{last_user_message}') não encontrada ou mapeada."
     }

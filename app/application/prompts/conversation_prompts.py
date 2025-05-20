@@ -145,16 +145,19 @@ Por favor, informe o horário que você deseja.
 """)
 ])
 
-VALIDATE_SPECIALTY_PROMPT_TEMPLATE = ChatPromptTemplate.from_template( # NOVO PROMPT
+VALIDATE_SPECIALTY_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
     """
     Você é um assistente inteligente de uma clínica médica.
-    A entrada do usuário abaixo deveria ser o nome de uma especialidade médica.
-    Sua tarefa é:
-    1. Analisar a entrada do usuário: "{user_input_specialty}".
-    2. Se parecer ser um nome de especialidade médica (mesmo que abreviado, com erros de digitação leves ou em caixa baixa/alta), normalize-o para o formato padrão (ex: "cardio" -> "Cardiologia", "ortopedista" -> "Ortopedia", "clinico geral" -> "Clínico Geral").
-    3. Se NÃO parecer ser uma especialidade médica (ex: "quero marcar uma consulta", "meu joelho dói", "amanhã"), retorne a frase "ENTRADA_INVALIDA_NAO_EH_ESPECIALIDADE".
+    A entrada do usuário abaixo foi dada em um contexto onde se espera o nome de uma especialidade médica.
+    Sua tarefa é analisar a entrada do usuário e classificá-la:
 
-    Retorne APENAS o nome da especialidade normalizado ou a frase "ENTRADA_INVALIDA_NAO_EH_ESPECIALIDADE".
+    Entrada do usuário: "{user_input_specialty}"
+
+    1.  Se a entrada do usuário for uma pergunta explícita para listar as especialidades disponíveis (ex: "Quais tem?", "Quais especialidades vocês oferecem?", "Me diga as opções", "Liste as especialidades"), retorne a frase "LISTAR_ESPECIALIDADES".
+    2.  Se a entrada parecer ser um nome de especialidade médica (mesmo que abreviado, com erros de digitação leves ou em caixa baixa/alta), normalize-o para o formato padrão (ex: "cardio" -> "Cardiologia", "ortopedista" -> "Ortopedia", "clinico geral" -> "Clínico Geral").
+    3.  Se NÃO parecer ser uma especialidade médica E NÃO for uma solicitação de listagem (ex: "quero marcar uma consulta", "meu joelho dói", "amanhã", "não sei"), retorne a frase "ENTRADA_INVALIDA_NAO_EH_ESPECIALIDADE".
+
+    Retorne APENAS o resultado da classificação: o nome da especialidade normalizado, OU "LISTAR_ESPECIALIDADES", OU "ENTRADA_INVALIDA_NAO_EH_ESPECIALIDADE".
     Não inclua nenhuma outra explicação, aspas ou prefixos.
 
     Exemplos:
@@ -163,10 +166,12 @@ VALIDATE_SPECIALTY_PROMPT_TEMPLATE = ChatPromptTemplate.from_template( # NOVO PR
     - Usuário: "ortopedia e traumatologia" -> Ortopedia e Traumatologia
     - Usuário: "clínico geral" -> Clínico Geral
     - Usuário: "preciso de um gastro" -> Gastroenterologia
+    - Usuário: "Quais tem?" -> LISTAR_ESPECIALIDADES
+    - Usuário: "Quais são as especialidades?" -> LISTAR_ESPECIALIDADES
     - Usuário: "meu pé está doendo" -> ENTRADA_INVALIDA_NAO_EH_ESPECIALIDADE
     - Usuário: "qualquer uma" -> ENTRADA_INVALIDA_NAO_EH_ESPECIALIDADE
+    - Usuário: "não sei qual especialidade" -> ENTRADA_INVALIDA_NAO_EH_ESPECIALIDADE
 
-    Entrada do usuário: "{user_input_specialty}"
     Resultado:
     """
 )
