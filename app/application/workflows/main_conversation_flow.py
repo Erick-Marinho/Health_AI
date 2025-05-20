@@ -35,7 +35,8 @@ from app.application.prompts.conversation_prompts import (
     VALIDATE_CHOSEN_TIME_PROMPT_TEMPLATE,
     FINAL_SCHEDULING_CONFIRMATION_PROMPT_TEMPLATE,
     VALIDATE_FINAL_CONFIRMATION_PROMPT_TEMPLATE,
-    EXTRACT_FULL_NAME_PROMPT_TEMPLATE
+    EXTRACT_FULL_NAME_PROMPT_TEMPLATE,
+    CHECK_CANCELLATION_PROMPT_TEMPLATE
 )
 from app.domain.models.user_profile import FullNameModel
 from app.infrastructure.llm_clients import get_llm_client
@@ -1239,6 +1240,56 @@ def process_retry_option_choice_node(state: MainWorkflowState, llm_client: ChatO
     
         return updates
 
+def check_cancellation_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> dict:
+    """
+    Verifica se a última mensagem do usuário indica uma intenção de cancelar o agendamento.
+    """
+    logger.debug("--- Nó: check_cancellation_node ---")
+    user_message_content = get_last_user_message_content(state["messages"])
+    current_op = state.get("current_operation")
+
+    if not user_message_content or current_op != "SCHEDULING":
+        logger.debug("Nenhuma mensagem de usuário para checar cancelamento ou não está em agendamento. Prosseguindo.")
+        return {"cancellation_check_result": "PROCEED"}
+
+    try:
+        prompt_messages = CHECK_CANCELLATION_PROMPT_TEMPLATE.format_messages(user_message=user_message_content)
+        llm_response = llm_client.invoke(prompt_messages)
+        cancellation_intent = llm_response.content.strip().upper()
+        logger.info(f"Verificação de cancelamento para '{user_message_content}': LLM respondeu '{cancellation_intent}'")
+
+        if cancellation_intent == "SIM":
+            logger.info(f"Intenção de cancelamento detectada para o usuário {state.get('user_full_name', '')}.")
+            return {
+                "response_to_user": "Entendido. O processo de agendamento foi cancelado. Se precisar de algo mais, é só chamar!",
+                "current_operation": None,
+                "scheduling_step": None,
+                "user_full_name": state.get("user_full_name"),
+                "user_chosen_specialty": None,
+                "user_chosen_specialty_id": None,
+                "professional_preference_type": None,
+                "user_provided_professional_name": None,
+                "user_chosen_professional_id": None,
+                "user_chosen_professional_name": None,
+                "available_professionals_list": None,
+                "user_chosen_turn": None,
+                "available_dates_presented": None,
+                "user_chosen_date": None,
+                "available_times_presented": None,
+                "user_chosen_time": None,
+                "user_chosen_time_fim": None,
+                "scheduling_completed": False,
+                "scheduling_values_confirmed": None,
+                "cancellation_check_result": "CANCELLED"
+            }
+        else:
+            logger.debug("Nenhuma intenção de cancelamento detectada. Prosseguindo com o fluxo normal.")
+            return {"cancellation_check_result": "PROCEED"}
+
+    except Exception as e:
+        logger.error(f"Erro ao verificar intenção de cancelamento com LLM: {e}", exc_info=True)
+        return {"cancellation_check_result": "PROCEED_ λόγω_ERRO"}
+
 # === consultas api ===
 
 def coletar_validar_turno_node(state: MainWorkflowState, llm_client: ChatOpenAI) -> dict:
@@ -1668,14 +1719,34 @@ def dispatcher_node(state: MainWorkflowState) -> dict:
 # === LÓGICA DE ROTEAMENTO ===
 def route_initial_or_ongoing(state: MainWorkflowState) -> str:
     current_op = state.get("current_operation")
+    messages = state.get("messages", [])
+    last_message_is_human = messages and isinstance(messages[-1], HumanMessage)
     logger.info(f"Roteamento Inicial/Contínuo: Current operation = {current_op}")
 
-    if current_op == "SCHEDULING":
-        logger.info("Operação de agendamento em progresso. Roteando para 'route_scheduling_step'.")
-        return "route_scheduling_step" # Nova rota para o dispatcher de agendamento
-    else: 
-        logger.info("Nenhuma operação principal em progresso ou operação concluída. Roteando para 'categorize_intent'.")
+    if current_op == "SCHEDULING" and last_message_is_human:
+        if state.get("response_to_user") is None or state.get("cancellation_check_result") is None:
+             logger.info("Operação de agendamento em progresso com nova mensagem humana. Roteando para 'check_cancellation_node'.")
+             return "check_cancellation_node"
+        else:
+            logger.info("Operação de agendamento em progresso, mas parece ser fluxo interno ou resposta já definida. Roteando para 'route_scheduling_step'.")
+            state["cancellation_check_result"] = None
+            return "route_scheduling_step"
+    elif current_op == "SCHEDULING":
+        logger.info("Operação de agendamento em progresso (fluxo interno). Roteando para 'route_scheduling_step'.")
+        return "route_scheduling_step"
+    else:
+        logger.info("Nenhuma operação de agendamento em progresso. Roteando para 'categorize_intent'.")
         return "categorize_intent"
+
+def route_after_cancellation_check(state: MainWorkflowState) -> str:
+    """
+    Roteia após a verificação de intenção de cancelamento.
+    """
+    cancellation_result = state.get("cancellation_check_result")
+    logger.info(f"Roteamento após verificação de cancelamento: Resultado = {cancellation_result}")
+    if cancellation_result == "CANCELLED":
+        return END
+    return "route_scheduling_step"
 
 def route_after_categorization(state: MainWorkflowState) -> str:
     categoria = state.get("categoria")
@@ -1792,6 +1863,7 @@ def get_main_conversation_graph_definition() -> StateGraph:
     workflow_builder.add_node("process_final_scheduling_confirmation_node", partial(process_final_scheduling_confirmation_node, llm_client=llm_instance))
 
     workflow_builder.add_node("route_after_user_interaction", lambda state: state) 
+    workflow_builder.add_node("check_cancellation_node", partial(check_cancellation_node, llm_client=llm_instance))
 
 
     workflow_builder.set_entry_point("dispatcher")
@@ -1801,7 +1873,17 @@ def get_main_conversation_graph_definition() -> StateGraph:
         route_initial_or_ongoing,
         {
             "route_scheduling_step": "route_scheduling_step", 
-            "categorize_intent": "categorize_intent"
+            "categorize_intent": "categorize_intent",
+            "check_cancellation_node": "check_cancellation_node",
+        }
+    )
+
+    workflow_builder.add_conditional_edges(
+        "check_cancellation_node",
+        route_after_cancellation_check,
+        {
+            END: END,
+            "route_scheduling_step": "route_scheduling_step"
         }
     )
 

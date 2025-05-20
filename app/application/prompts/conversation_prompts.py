@@ -350,3 +350,31 @@ EXTRACT_FULL_NAME_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
     Nome Completo Extraído:
     """
 )
+
+CHECK_CANCELLATION_PROMPT_TEMPLATE = ChatPromptTemplate.from_template(
+    """
+    Você está auxiliando um usuário que está no meio de um processo de agendamento médico.
+    A última mensagem do usuário foi: "{user_message}"
+
+    Esta mensagem indica que o usuário deseja cancelar, parar, ou não prosseguir com o processo de agendamento atual?
+    Responda APENAS com "SIM" ou "NAO".
+
+    Exemplos de mensagens que indicam cancelamento (devem resultar em "SIM"):
+    - "não quero mais"
+    - "cancela"
+    - "parar o agendamento"
+    - "deixa pra lá"
+    - "não, obrigado, não preciso mais"
+    - "mudei de ideia"
+
+    Exemplos de mensagens que NÃO indicam cancelamento (devem resultar em "NAO"):
+    - "sim, quero continuar"
+    - "Cardiologia" (resposta a uma pergunta sobre especialidade)
+    - "manhã" (resposta a uma pergunta sobre turno)
+    - "qual o próximo passo?"
+    - "ok" (sem um contexto claro de cancelamento)
+
+    Mensagem do usuário: "{user_message}"
+    Indica cancelamento (SIM/NAO)?:
+    """
+)
