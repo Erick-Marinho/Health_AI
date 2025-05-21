@@ -2235,7 +2235,7 @@ def get_main_conversation_graph_definition() -> StateGraph:
 
     # Saídas dos nós
     workflow_builder.add_edge("handle_greeting_farewell", END)
-    workflow_builder.add_edge("handle_fallback_placeholder", END)
+    workflow_builder.add_edge("placeholder_fallback_node", END)
     workflow_builder.add_edge("solicitar_nome_agendamento_node", END) 
     workflow_builder.add_edge("coletar_validar_nome_agendamento_node", "route_after_user_interaction")
     workflow_builder.add_edge("coletar_validar_especialidade_node","route_after_user_interaction")
