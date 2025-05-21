@@ -2138,7 +2138,6 @@ def get_main_conversation_graph_definition() -> StateGraph:
     workflow_builder.add_node("process_final_scheduling_confirmation_node", partial(process_final_scheduling_confirmation_node, llm_client=llm_instance))
     workflow_builder.add_node("route_after_user_interaction", lambda state: state) 
     workflow_builder.add_node("check_cancellation_node", partial(check_cancellation_node, llm_client=llm_instance))
-    workflow_builder.add_node("process_final_scheduling_confirmation_node", partial(process_final_scheduling_confirmation_node, llm_client=llm_instance))
     workflow_builder.add_node("process_fallback_choice_node", partial(process_fallback_choice_node, llm_client=llm_instance))
 
     workflow_builder.set_entry_point("dispatcher")
